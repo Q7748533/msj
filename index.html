@@ -808,7 +808,7 @@ function doImportExcel(fileInput) {
     const workbook = XLSX.read(data, { type: 'array' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-    if (rows.length < 2) return;
+    if (rows.length < 2) { fileInput.value = ''; return; }
 
     const headers = rows[0].map(h => String(h || '').trim());
     const existingNos = new Set(orders.map(o => o['订单号']));
@@ -828,13 +828,14 @@ function doImportExcel(fileInput) {
       getSupabase().from('orders').upsert(newOrders, { onConflict: '订单号' }).then(({ error }) => {
         if (error) { alert('导入失败: ' + error.message); return; }
         loadOrders();
+        fileInput.value = ''; // 仅在导入成功后清空，失败时保留供重试
       });
     } else {
       alert('没有新订单导入（可能已存在或订单号为空）');
+      fileInput.value = ''; // 没有新订单也清空（重试无意义）
     }
   };
   reader.readAsArrayBuffer(file);
-  fileInput.value = '';
 }
 
 // ============ 筛选 ============
@@ -1032,9 +1033,11 @@ function editCell(orderNo, field, td) {
   const input = document.createElement('input');
   input.value = current;
   isEditing = true;
+  let editCancelled = false; // 取消标志：Escape 时不保存
   input.addEventListener('blur', () => {
-    const newVal = input.value.trim();
     isEditing = false;
+    if (editCancelled) { return; } // Escape 触发的 blur 不保存
+    const newVal = input.value.trim();
     if (newVal === current) { renderTable(); return; }
     getSupabase().from('orders').update({ [field]: newVal }).eq('订单号', orderNo).then(({ error }) => {
       if (error) { alert('保存失败: ' + error.message); renderTable(); return; }
@@ -1043,7 +1046,7 @@ function editCell(orderNo, field, td) {
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') input.blur();
-    if (e.key === 'Escape') { isEditing = false; renderTable(); }
+    if (e.key === 'Escape') { editCancelled = true; isEditing = false; renderTable(); }
   });
   td.textContent = '';
   td.appendChild(input);
@@ -1160,8 +1163,18 @@ function showCtxMenu(e, orderNo) {
   ctxOrderNo = orderNo;
   const menu = document.getElementById('ctxMenu');
   menu.style.display = 'block';
-  menu.style.left = e.pageX + 'px';
-  menu.style.top = e.pageY + 'px';
+  // 使用 clientX/clientY 适配 fixed 定位，并做边界检查防止超出视口
+  const menuRect = menu.getBoundingClientRect();
+  let left = e.clientX;
+  let top = e.clientY;
+  if (left + menuRect.width > window.innerWidth) {
+    left = window.innerWidth - menuRect.width - 4;
+  }
+  if (top + menuRect.height > window.innerHeight) {
+    top = window.innerHeight - menuRect.height - 4;
+  }
+  menu.style.left = Math.max(4, left) + 'px';
+  menu.style.top = Math.max(4, top) + 'px';
 }
 
 function ctxDelete() {
