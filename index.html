@@ -244,10 +244,29 @@ body {
 button:disabled { opacity: .35; cursor: not-allowed; }
 .content-body {
   flex: 1;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.table-wrap { overflow-x: auto; }
+.table-wrap { 
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox: 隐藏滚动条 */
+}
+.table-wrap::-webkit-scrollbar { display: none; /* Chrome/Safari: 隐藏滚动条 */ }
+
+/* 浮动水平滚动条 - 固定在视口底部，始终可见 */
+.hscroll {
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+  background: #fafafa;
+  border-top: 1px solid #f0f0f0;
+}
+.hscroll > div {
+  height: 1px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -462,6 +481,9 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
   .page-num { min-width: 26px; height: 26px; font-size: 11px; }
   .page-info { font-size: 10px; margin-left: 4px; padding: 4px 6px; }
 
+  /* 浮动滚动条 - 紧凑 */
+  .hscroll { height: 10px; }
+
   /* 弹窗 */
   .modal { min-width: auto; width: 90%; padding: 16px 18px; }
   .modal h3 { font-size: 14px; }
@@ -544,6 +566,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
         <div>暂无订单，请在左侧粘贴数据后导入</div>
       </div>
     </div>
+    <div class="hscroll" id="hscroll"><div id="hscrollInner"></div></div>
   </div>
 </div>
 
@@ -950,6 +973,7 @@ function renderTable() {
   container.innerHTML = html;
   updateSummary();
   checkDriverReady();
+  syncHScroll();
 }
 
 function goPage(page) {
@@ -1338,6 +1362,38 @@ function esc(str) {
 document.getElementById('modalOverlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
+
+// ============ 浮动水平滚动条同步 ============
+function syncHScroll() {
+  const hscroll = document.getElementById('hscroll');
+  const hscrollInner = document.getElementById('hscrollInner');
+  const tableWrap = document.querySelector('.table-wrap');
+  if (!hscroll || !hscrollInner) return;
+  if (!tableWrap) { hscrollInner.style.width = '0px'; return; }
+  const table = tableWrap.querySelector('table');
+  if (!table) { hscrollInner.style.width = '0px'; return; }
+  hscrollInner.style.width = table.offsetWidth + 'px';
+  hscroll.scrollLeft = tableWrap.scrollLeft;
+}
+
+(function setupHScrollSync() {
+  const hscroll = document.getElementById('hscroll');
+  if (!hscroll) return;
+  // 浮动滚动条 → 同步表格水平滚动
+  hscroll.addEventListener('scroll', () => {
+    const tableWrap = document.querySelector('.table-wrap');
+    if (tableWrap) tableWrap.scrollLeft = hscroll.scrollLeft;
+  });
+  // 表格水平滚动 → 同步浮动滚动条（触控板/Shift+滚轮场景）
+  document.addEventListener('scroll', (e) => {
+    const target = e.target;
+    if (target && target.classList && target.classList.contains('table-wrap')) {
+      hscroll.scrollLeft = target.scrollLeft;
+    }
+  }, true);
+  // 窗口大小变化时重新同步
+  window.addEventListener('resize', syncHScroll);
+})();
 
 // 初始化：加载数据 + 开启实时同步
 loadOrders();
