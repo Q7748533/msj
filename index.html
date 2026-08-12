@@ -1034,14 +1034,29 @@ function editCell(orderNo, field, td) {
   input.value = current;
   isEditing = true;
   let editCancelled = false; // 取消标志：Escape 时不保存
+  // 局部恢复单元格显示，避免 renderTable() 重建表格导致滚动跳动和正在编辑的其他单元格被销毁
+  function restoreCell(val) {
+    td.innerHTML = val ? esc(val) : '<span style="color:#ccc">点击填写</span>';
+  }
   input.addEventListener('blur', () => {
     isEditing = false;
     if (editCancelled) { return; } // Escape 触发的 blur 不保存
     const newVal = input.value.trim();
-    if (newVal === current) { renderTable(); return; }
+    if (newVal === current) {
+      restoreCell(current); // 值未改变，只恢复显示
+      return;
+    }
+    restoreCell(newVal); // 先显示新值，避免视觉跳动
     getSupabase().from('orders').update({ [field]: newVal }).eq('订单号', orderNo).then(({ error }) => {
-      if (error) { alert('保存失败: ' + error.message); renderTable(); return; }
-      loadOrders();
+      if (error) {
+        alert('保存失败: ' + error.message);
+        restoreCell(current); // 失败时恢复原值
+        return;
+      }
+      // 局部更新：只更新本地数据，不调用 loadOrders() 避免表格重建
+      order[field] = newVal;
+      updateSummary();
+      checkDriverReady();
     });
   });
   input.addEventListener('keydown', (e) => {
