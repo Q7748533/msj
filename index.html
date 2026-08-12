@@ -594,17 +594,22 @@ async function loadOrders() {
   let allOrders = [];
   let start = 0;
   const limit = 1000;
+  let hasError = false;
   while (true) {
     const { data, error } = await supabase
       .from('orders')
       .select('*', { count: 'exact' })
       .order('id', { ascending: true })
       .range(start, start + limit - 1);
-    if (error) { console.error('加载失败:', error); break; }
+    if (error) { console.error('加载失败:', error); hasError = true; break; }
     if (!data || data.length === 0) break;
     allOrders = allOrders.concat(data);
     if (data.length < limit) break;
     start += limit;
+  }
+  if (hasError) {
+    showToast('数据加载失败，请检查网络');
+    return;
   }
   orders = allOrders;
   renderTable();
@@ -892,21 +897,21 @@ function renderTable() {
   html += '</tr></thead><tbody>';
 
   pageOrders.forEach((o, displayIdx) => {
-    const realIdx = orders.indexOf(o);
-    html += `<tr data-idx="${realIdx}" oncontextmenu="showCtxMenu(event, ${realIdx})">`;
-    html += `<td><input type="checkbox" class="row-check" data-idx="${realIdx}" onclick="event.stopPropagation()"></td>`;
+    const orderNo = o['订单号'];
+    html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${esc(orderNo)}')">`;
+    html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}" onclick="event.stopPropagation()"></td>`;
     html += `<td>${start + displayIdx + 1}</td>`;
     COLUMNS.forEach(col => {
       const val = o[col] || '';
       if (col === '派单情况') {
         const cls = val === '已派' ? 'tag-done' : val === '订单取消' ? 'tag-cancel' : 'tag-pending';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal(${realIdx}, '派单情况')">${esc(val)}</span></td>`;
+        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${esc(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
       } else if (col === '是否结算') {
         const cls = val === '是' ? 'tag-yes' : 'tag-no';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal(${realIdx}, '是否结算')">${esc(val)}</span></td>`;
+        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${esc(orderNo)}', '是否结算')">${esc(val)}</span></td>`;
       } else if (['车号', '司机', '司机电话', '下车点'].includes(col)) {
         const addrCls = (col === '上车点' || col === '下车点') ? ' col-addr' : '';
-        html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell(${realIdx}, '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
+        html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${esc(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
       } else if (col === '上车点' || col === '服务标准' || col === '举牌服务') {
         html += `<td class="col-addr" title="${esc(val)}">${esc(val)}</td>`;
       } else {
@@ -960,23 +965,29 @@ function updateSummary() {
 // ============ 编辑 ============
 let modalTarget = null;
 
-function openModal(idx, field) {
-  modalTarget = { idx, field };
+function findOrderByNo(orderNo) {
+  return orders.find(o => o['订单号'] === orderNo);
+}
+
+function openModal(orderNo, field) {
+  modalTarget = { orderNo, field };
   const overlay = document.getElementById('modalOverlay');
   const title = document.getElementById('modalTitle');
   const optsDiv = document.getElementById('modalOptions');
+  const order = findOrderByNo(orderNo);
+  if (!order) { alert('订单不存在'); return; }
 
   if (field === '派单情况') {
     title.textContent = '修改派单状态';
     const options = ['未派', '已派', '订单取消'];
-    const current = orders[idx][field];
+    const current = order[field];
     optsDiv.innerHTML = options.map(o =>
       `<div class="opt${o === current ? ' active' : ''}" onclick="selectOpt(this, '${o}')">${o}</div>`
     ).join('');
   } else if (field === '是否结算') {
     title.textContent = '修改结算状态';
     const options = ['是', '否'];
-    const current = orders[idx][field];
+    const current = order[field];
     optsDiv.innerHTML = options.map(o =>
       `<div class="opt${o === current ? ' active' : ''}" onclick="selectOpt(this, '${o}')">${o}</div>`
     ).join('');
@@ -996,7 +1007,8 @@ function selectOpt(el, val) {
 function confirmModal() {
   if (!modalTarget || !selectedOptValue) { closeModal(); return; }
   const field = modalTarget.field;
-  getSupabase().from('orders').update({ [field]: selectedOptValue }).eq('订单号', orders[modalTarget.idx]['订单号']).then(({ error }) => {
+  const orderNo = modalTarget.orderNo;
+  getSupabase().from('orders').update({ [field]: selectedOptValue }).eq('订单号', orderNo).then(({ error }) => {
     if (error) { alert('保存失败: ' + error.message); return; }
     loadOrders();
   });
@@ -1009,26 +1021,30 @@ function closeModal() {
   selectedOptValue = '';
 }
 
-function editCell(idx, field, td) {
-  const current = orders[idx][field] || '';
+function editCell(orderNo, field, td) {
+  const order = findOrderByNo(orderNo);
+  if (!order) return;
+  const current = order[field] || '';
   const input = document.createElement('input');
   input.value = current;
   input.addEventListener('blur', () => {
     const newVal = input.value.trim();
-    getSupabase().from('orders').update({ [field]: newVal }).eq('订单号', orders[idx]['订单号']).then(({ error }) => {
-      if (error) { alert('保存失败: ' + error.message); return; }
-      loadOrders().then(() => checkDriverReady(idx));
+    if (newVal === current) { renderTable(); return; }
+    getSupabase().from('orders').update({ [field]: newVal }).eq('订单号', orderNo).then(({ error }) => {
+      if (error) { alert('保存失败: ' + error.message); renderTable(); return; }
+      loadOrders();
     });
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { renderTable(); }
   });
   td.textContent = '';
   td.appendChild(input);
   input.focus();
 }
 
-function checkDriverReady(idx) {
+function checkDriverReady() {
   // 统计未派且司机信息齐全的订单数量
   const readyCount = orders.filter(o =>
     o['派单情况'] === '未派' && o['车号'] && o['司机'] && o['司机电话']
@@ -1079,11 +1095,11 @@ function cancelPwd() {
 
 // ============ 删除 / 清空 ============
 
-function deleteOrder(idx) {
-  if (!confirm(`确定删除订单 ${orders[idx]['订单号']}？`)) return;
+function deleteOrder(orderNo) {
+  if (!confirm(`确定删除订单 ${orderNo}？`)) return;
   verifyPassword(function(ok) {
     if (!ok) return;
-    getSupabase().from('orders').delete().eq('订单号', orders[idx]['订单号']).then(({ error }) => {
+    getSupabase().from('orders').delete().eq('订单号', orderNo).then(({ error }) => {
       if (error) { alert('删除失败: ' + error.message); return; }
       loadOrders();
     });
@@ -1094,18 +1110,17 @@ function toggleSelectAll(el) {
   document.querySelectorAll('.row-check').forEach(cb => { cb.checked = el.checked; });
 }
 
-function getSelectedIdx() {
+function getSelectedOrderNos() {
   const cbs = document.querySelectorAll('.row-check:checked');
-  return Array.from(cbs).map(cb => parseInt(cb.getAttribute('data-idx')));
+  return Array.from(cbs).map(cb => cb.getAttribute('data-no'));
 }
 
 function batchDelete() {
-  const selected = getSelectedIdx();
-  if (selected.length === 0) { alert('请先勾选要删除的订单'); return; }
-  if (!confirm(`确定删除选中的 ${selected.length} 条订单？`)) return;
+  const nos = getSelectedOrderNos();
+  if (nos.length === 0) { alert('请先勾选要删除的订单'); return; }
+  if (!confirm(`确定删除选中的 ${nos.length} 条订单？`)) return;
   verifyPassword(async function(ok) {
     if (!ok) return;
-    const nos = selected.map(i => orders[i]['订单号']);
     const { error } = await getSupabase().from('orders').delete().in('订单号', nos);
     if (error) { alert('删除失败: ' + error.message); return; }
     loadOrders();
@@ -1123,11 +1138,11 @@ function clearOrders() {
 }
 
 // ============ 右键菜单 ============
-let ctxIdx = -1;
+let ctxOrderNo = null;
 
-function showCtxMenu(e, idx) {
+function showCtxMenu(e, orderNo) {
   e.preventDefault();
-  ctxIdx = idx;
+  ctxOrderNo = orderNo;
   const menu = document.getElementById('ctxMenu');
   menu.style.display = 'block';
   menu.style.left = e.pageX + 'px';
@@ -1135,15 +1150,15 @@ function showCtxMenu(e, idx) {
 }
 
 function ctxDelete() {
-  const idx = ctxIdx;
+  const orderNo = ctxOrderNo;
   hideCtxMenu();
-  if (idx < 0) return;
-  deleteOrder(idx);
+  if (!orderNo) return;
+  deleteOrder(orderNo);
 }
 
 function hideCtxMenu() {
   document.getElementById('ctxMenu').style.display = 'none';
-  ctxIdx = -1;
+  ctxOrderNo = null;
 }
 
 document.addEventListener('click', function(e) {
