@@ -275,6 +275,8 @@ th::after {
   border-bottom: 1px solid #e8e8e8;
 }
 tr:hover td { background: #f5f8ff; }
+tr.editing td { background: #e6f7ff !important; }
+tr.editing td.editable { background: #bae7ff !important; }
 td { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 
@@ -587,6 +589,8 @@ let filterStatus = 'all';
 let searchTerm = '';
 let currentPage = 1;
 let isEditing = false; // 防止实时同步打断编辑
+let tabJumpTarget = null; // Tab 跳转目标 { orderNo, field }
+const EDITABLE_FIELDS = ['车号', '司机', '司机电话'];
 const PAGE_SIZE = 100;
 
 async function loadOrders() {
@@ -974,6 +978,70 @@ function findOrderByNo(orderNo) {
   return orders.find(o => o['订单号'] === orderNo);
 }
 
+// 获取当前页可编辑单元格的下一个目标（Tab/Shift+Tab 跳转用）
+function getNextEditableCell(orderNo, field, reverse) {
+  let filtered = filterStatus === 'all' ? orders : orders.filter(o => o['派单情况'] === filterStatus);
+  if (searchTerm) {
+    const kw = searchTerm.toLowerCase();
+    const searchFields = ['订单号', '司机', '车号', '司机电话', '上车点', '下车点', '服务类型'];
+    filtered = filtered.filter(o => searchFields.some(f => o[f] && o[f].toLowerCase().includes(kw)));
+  }
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageOrders = filtered.slice(start, start + PAGE_SIZE);
+
+  let fieldIdx = EDITABLE_FIELDS.indexOf(field);
+  if (fieldIdx === -1) return null;
+
+  let orderIdx = pageOrders.findIndex(o => o['订单号'] === orderNo);
+  if (orderIdx === -1) return null;
+
+  if (reverse) {
+    fieldIdx--;
+    if (fieldIdx < 0) {
+      fieldIdx = EDITABLE_FIELDS.length - 1;
+      orderIdx--;
+      if (orderIdx < 0) return null;
+    }
+  } else {
+    fieldIdx++;
+    if (fieldIdx >= EDITABLE_FIELDS.length) {
+      fieldIdx = 0;
+      orderIdx++;
+      if (orderIdx >= pageOrders.length) return null;
+    }
+  }
+
+  return {
+    orderNo: pageOrders[orderIdx]['订单号'],
+    field: EDITABLE_FIELDS[fieldIdx]
+  };
+}
+
+// 按 订单号 + 字段名 定位单元格 DOM
+function findCellElement(orderNo, field) {
+  const trs = document.querySelectorAll('tr[data-no]');
+  for (const tr of trs) {
+    if (tr.getAttribute('data-no') === orderNo) {
+      const cells = tr.querySelectorAll('td');
+      const colIdx = COLUMNS.indexOf(field);
+      if (colIdx === -1) return null;
+      return cells[colIdx + 2]; // +2 因为前两列是 checkbox 和 #
+    }
+  }
+  return null;
+}
+
+// Tab 跳转：打开下一个可编辑单元格
+function jumpToTabTarget() {
+  if (!tabJumpTarget) return;
+  const target = tabJumpTarget;
+  tabJumpTarget = null;
+  const td = findCellElement(target.orderNo, target.field);
+  if (td) {
+    editCell(target.orderNo, target.field, td);
+  }
+}
+
 function openModal(orderNo, field) {
   modalTarget = { orderNo, field };
   const overlay = document.getElementById('modalOverlay');
@@ -1034,16 +1102,26 @@ function editCell(orderNo, field, td) {
   input.value = current;
   isEditing = true;
   let editCancelled = false; // 取消标志：Escape 时不保存
+  const tr = td.closest('tr');
+  if (tr) tr.classList.add('editing'); // 整行高亮
+
   // 局部恢复单元格显示，避免 renderTable() 重建表格导致滚动跳动和正在编辑的其他单元格被销毁
   function restoreCell(val) {
     td.innerHTML = val ? esc(val) : '<span style="color:#ccc">点击填写</span>';
+    if (tr) tr.classList.remove('editing');
   }
+
   input.addEventListener('blur', () => {
     isEditing = false;
-    if (editCancelled) { return; } // Escape 触发的 blur 不保存
+    if (editCancelled) {
+      restoreCell(current);
+      tabJumpTarget = null;
+      return; // Escape 触发的 blur 不保存
+    }
     const newVal = input.value.trim();
     if (newVal === current) {
       restoreCell(current); // 值未改变，只恢复显示
+      jumpToTabTarget(); // Tab 跳转
       return;
     }
     restoreCell(newVal); // 先显示新值，避免视觉跳动
@@ -1051,18 +1129,33 @@ function editCell(orderNo, field, td) {
       if (error) {
         alert('保存失败: ' + error.message);
         restoreCell(current); // 失败时恢复原值
+        tabJumpTarget = null;
         return;
       }
       // 局部更新：只更新本地数据，不调用 loadOrders() 避免表格重建
       order[field] = newVal;
       updateSummary();
       checkDriverReady();
+      jumpToTabTarget(); // Tab 跳转
     });
   });
+
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') input.blur();
-    if (e.key === 'Escape') { editCancelled = true; isEditing = false; renderTable(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === 'Escape') {
+      editCancelled = true;
+      isEditing = false;
+      tabJumpTarget = null;
+      input.blur();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      tabJumpTarget = getNextEditableCell(orderNo, field, e.shiftKey); // 可能为 null（到边界）
+      input.blur();
+    }
   });
+
   td.textContent = '';
   td.appendChild(input);
   input.focus();
