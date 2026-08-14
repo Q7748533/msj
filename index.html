@@ -618,6 +618,25 @@ let tabJumpTarget = null; // Tab 跳转目标 { orderNo, field }
 const EDITABLE_FIELDS = ['车号', '司机', '司机电话'];
 const PAGE_SIZE = 100;
 
+// 订单排序：已派+取消按服务时间升序在前，未派按导入顺序(id)在后
+// 业务逻辑：新订单导入为未派→排末尾集中处理；分配司机变已派→按服务时间归位；
+// 已派订单改为取消→仍按服务时间留在原位（避免跳到列表最后导致看漏）
+function sortOrders(list) {
+  return [...list].sort((a, b) => {
+    // 已派 + 订单取消：按服务日期升序（取消保持取消前的时间位置）
+    const aSorted = a['派单情况'] === '已派' || a['派单情况'] === '订单取消';
+    const bSorted = b['派单情况'] === '已派' || b['派单情况'] === '订单取消';
+    if (aSorted && bSorted) {
+      // 格式 YYYY-MM-DD HH:MM:SS 可直接字符串比较
+      return (a['服务日期'] || '').localeCompare(b['服务日期'] || '');
+    }
+    if (aSorted) return -1;  // 已派/取消排前
+    if (bSorted) return 1;
+    // 未派：按导入顺序(id)
+    return (a.id || 0) - (b.id || 0);
+  });
+}
+
 async function loadOrders() {
   const supabase = getSupabase();
   if (!supabase) { setTimeout(loadOrders, 300); return; }
@@ -641,7 +660,7 @@ async function loadOrders() {
     showToast('数据加载失败，请检查网络');
     return;
   }
-  orders = allOrders;
+  orders = sortOrders(allOrders);
   renderTable();
 }
 
