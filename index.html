@@ -444,6 +444,10 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 @media (max-width: 900px) {
   body { height: auto; min-height: 100vh; }
 
+  /* 移动端禁用订单行长按 callout 和文本选择（input 除外） */
+  tr[data-no] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  tr[data-no] input { -webkit-user-select: text; user-select: text; }
+
   /* 顶栏 - 卡片缩小 */
   .header { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
   .header h1 { font-size: 15px; }
@@ -1458,6 +1462,40 @@ function syncHScroll() {
   }, true);
   // 窗口大小变化时重新同步
   window.addEventListener('resize', syncHScroll);
+})();
+
+// 移动端长按订单行 500ms 弹出右键菜单（兼容 iOS/Android）
+(function setupLongPress() {
+  const container = document.getElementById('tableArea');
+  let longPressTimer = null;
+  let longPressTriggered = false;
+
+  container.addEventListener('touchstart', (e) => {
+    const tr = e.target.closest('tr[data-no]');
+    if (!tr) return;
+    const orderNo = tr.getAttribute('data-no');
+    if (!orderNo) return;
+    longPressTriggered = false;
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true;
+      const touch = e.touches[0];
+      showCtxMenu({
+        preventDefault: () => {},
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      }, orderNo);
+      if (navigator.vibrate) navigator.vibrate(50); // 震动反馈
+    }, 500);
+  }, { passive: true });
+
+  container.addEventListener('touchend', (e) => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    if (longPressTriggered) e.preventDefault(); // 阻止后续 click，避免触发编辑
+  });
+
+  container.addEventListener('touchmove', () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  }, { passive: true });
 })();
 
 // 初始化：加载数据 + 开启实时同步
