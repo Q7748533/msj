@@ -435,6 +435,7 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
   color: #333;
 }
 .ctx-item:hover { background: #f5f5f5; color: #ff4d4f; }
+.ctx-item.ctx-copy:hover { color: #1677ff; }
 
 /* 复选框 */
 td input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical-align: middle; }
@@ -599,6 +600,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 
 <!-- 右键菜单 -->
 <div class="ctx-menu" id="ctxMenu" style="display:none">
+  <div class="ctx-item ctx-copy" onclick="ctxCopy()">复制订单</div>
   <div class="ctx-item" onclick="ctxDelete()">删除订单</div>
 </div>
 
@@ -1240,14 +1242,17 @@ function showToast(msg) {
 }
 
 // 成功提示：绿色样式，3 秒后自动消失，期间锁定不被派单提醒覆盖
+let successTimer = null;
 function showSuccess(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
   toast.className = 'toast show success';
   toastLock = true;
-  setTimeout(() => {
+  if (successTimer) clearTimeout(successTimer); // 清除前一次 timer，避免提前关闭
+  successTimer = setTimeout(() => {
     toast.className = 'toast';
     toastLock = false;
+    successTimer = null;
     checkDriverReady(); // 恢复派单提醒状态
   }, 3000);
 }
@@ -1357,6 +1362,21 @@ function showCtxMenu(e, orderNo) {
   }
   menu.style.left = Math.max(4, left) + 'px';
   menu.style.top = Math.max(4, top) + 'px';
+}
+
+// 复制订单完整内容到剪贴板（键值对格式，与粘贴导入格式一致，可直接回贴导入）
+function ctxCopy() {
+  const orderNo = ctxOrderNo;
+  hideCtxMenu();
+  if (!orderNo) return;
+  const order = findOrderByNo(orderNo);
+  if (!order) return;
+  const text = COLUMNS.map(c => `${c}：${order[c] || ''}`).join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    showSuccess('订单已复制到剪贴板');
+  }).catch(() => {
+    alert('复制失败，请手动复制：\n' + text);
+  });
 }
 
 function ctxDelete() {
