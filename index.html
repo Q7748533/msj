@@ -414,6 +414,8 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast::before { content: '⚠️ '; }
+.toast.success { background: #f6ffed; color: #389e0d; border-color: #b7eb8f; box-shadow: 0 4px 16px rgba(82,196,26,.2); }
+.toast.success::before { content: '✓ '; }
 
 /* 右键菜单 */
 .ctx-menu {
@@ -794,10 +796,11 @@ function doImportOrders() {
   // 去重：按订单号跳过已存在的
   const existingNos = new Set(orders.map(o => o['订单号']));
   const newOrders = [];
+  let dupCount = 0;
   for (const raw of rawList) {
     const order = mapOrder(raw);
     if (!order['订单号']) continue;
-    if (existingNos.has(order['订单号'])) continue;
+    if (existingNos.has(order['订单号'])) { dupCount++; continue; }
     newOrders.push(order);
     existingNos.add(order['订单号']);
   }
@@ -807,9 +810,12 @@ function doImportOrders() {
       if (error) { alert('导入失败: ' + error.message); return; }
       loadOrders();
       document.getElementById('inputArea').value = '';
+      showSuccess(dupCount > 0
+        ? `成功导入 ${newOrders.length} 条，跳过 ${dupCount} 条重复订单`
+        : `成功导入 ${newOrders.length} 条订单`);
     });
   } else {
-    alert('没有新订单导入（可能已存在或订单号为空）');
+    alert(dupCount > 0 ? `没有新订单导入（${dupCount} 条重复）` : '没有新订单导入（订单号为空）');
   }
 }
 
@@ -840,13 +846,14 @@ function doImportExcel(fileInput) {
     const headers = rows[0].map(h => String(h || '').trim());
     const existingNos = new Set(orders.map(o => o['订单号']));
     const newOrders = [];
+    let dupCount = 0;
 
     for (let i = 1; i < rows.length; i++) {
       const raw = {};
       headers.forEach((h, j) => { raw[h] = rows[i][j] != null ? String(rows[i][j]).trim() : ''; });
       const order = mapOrder(raw);
       if (!order['订单号']) continue;
-      if (existingNos.has(order['订单号'])) continue;
+      if (existingNos.has(order['订单号'])) { dupCount++; continue; }
       newOrders.push(order);
       existingNos.add(order['订单号']);
     }
@@ -856,9 +863,12 @@ function doImportExcel(fileInput) {
         if (error) { alert('导入失败: ' + error.message); return; }
         loadOrders();
         fileInput.value = ''; // 仅在导入成功后清空，失败时保留供重试
+        showSuccess(dupCount > 0
+          ? `成功导入 ${newOrders.length} 条，跳过 ${dupCount} 条重复订单`
+          : `成功导入 ${newOrders.length} 条订单`);
       });
     } else {
-      alert('没有新订单导入（可能已存在或订单号为空）');
+      alert(dupCount > 0 ? `没有新订单导入（${dupCount} 条重复）` : '没有新订单导入（订单号为空）');
       fileInput.value = ''; // 没有新订单也清空（重试无意义）
     }
   };
@@ -1195,13 +1205,31 @@ function checkDriverReady() {
 }
 
 // ============ Toast ============
+let toastLock = false; // success 提示显示期间锁定，防止被 checkDriverReady 的派单提醒覆盖
+
 function showToast(msg) {
+  if (toastLock) return; // success 显示中，跳过
   const toast = document.getElementById('toast');
   toast.textContent = msg;
-  toast.classList.add('show');
+  toast.className = 'toast show';
 }
+
+// 成功提示：绿色样式，3 秒后自动消失，期间锁定不被派单提醒覆盖
+function showSuccess(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = 'toast show success';
+  toastLock = true;
+  setTimeout(() => {
+    toast.className = 'toast';
+    toastLock = false;
+    checkDriverReady(); // 恢复派单提醒状态
+  }, 3000);
+}
+
 function hideToast() {
-  document.getElementById('toast').classList.remove('show');
+  if (toastLock) return;
+  document.getElementById('toast').className = 'toast';
 }
 
 // ============ 密码验证 ============
