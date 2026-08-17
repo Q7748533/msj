@@ -423,6 +423,9 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 .user-badge:hover { background: #bae0ff; }
 /* 车队视图：隐藏调度专属功能 */
 body.fleet-view .admin-only { display: none !important; }
+/* 未登录：主体数据模糊+禁交互，防止登录层背后看到订单 */
+body.pre-login .main,
+body.pre-login .summary { filter: blur(8px); pointer-events: none; user-select: none; }
 
 /* Toast 提示 */
 .toast {
@@ -557,7 +560,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 }
 </style>
 </head>
-<body>
+<body class="pre-login">
 
 <div class="header">
   <h1>派单系统 <span style="font-size:12px;color:#fa8c16;font-weight:400;">排序测试</span></h1>
@@ -1345,6 +1348,7 @@ function enterApp() {
 
 // 按身份切换视图：车队视图锁定车队筛选+隐藏调度专属功能（CSS admin-only）
 function applyRoleView() {
+  document.body.classList.remove('pre-login'); // 登录成功解除数据模糊
   const sel = document.getElementById('fleetFilter');
   if (isFleet()) {
     document.body.classList.add('fleet-view');

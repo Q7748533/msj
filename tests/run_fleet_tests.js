@@ -306,17 +306,19 @@ const TESTS = [
     assertEqual(c.fn.checkLogin('fleet', '一队', ''), false, '空密码应拒绝');
     assertEqual(c.fn.checkLogin('guest', '一队', '111'), false, '未知角色应拒绝');
   }],
-  ['F6 doLogin 车队登录成功 → 锁定本车队视图', c => {
+  ['F6 doLogin 车队登录成功 → 锁定本车队视图+解除数据模糊', c => {
     c.fn.fleetPws = { '一队': '111' };
     c.fn.loginRole = 'fleet';
     c.el('loginFleet').value = '一队';
     c.el('loginPwd').value = '111';
+    c.el('body').classList.add('pre-login'); // 模拟未登录时的数据模糊状态
     c.fn.doLogin();
     assertEqual(c.fn.userRole, 'fleet', '登录后 userRole 应为 fleet');
     assertEqual(c.fn.userFleet, '一队', '登录后 userFleet 应为 一队');
     assertEqual(c.fn.fleetFilter, '一队', '车队筛选应锁定为本车队');
     assert(c.el('fleetFilter').disabled === true, '车队筛选下拉应禁用');
     assert(c.el('body').classList.contains('fleet-view'), 'body 应加 fleet-view 类（隐藏调度功能）');
+    assert(!c.el('body').classList.contains('pre-login'), '登录成功应解除 pre-login 数据模糊');
     assert(!c.el('loginOverlay').classList.contains('show'), '登录层应关闭');
     assert(c.el('loginError').style.display === 'none', '不应显示错误提示');
   }],
