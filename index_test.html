@@ -451,6 +451,13 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 @media (max-width: 900px) {
   body { height: auto; min-height: 100vh; }
 
+  /* 移动端禁用订单行长按 callout 和文本选择（input 除外），配合长按弹菜单 */
+  tr[data-no] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  tr[data-no] input { -webkit-user-select: text; user-select: text; }
+
+  /* 车队下拉框紧凑化（侧栏空间有限） */
+  .fleet-select { padding: 4px 8px; font-size: 11px; }
+
   /* 顶栏 - 卡片缩小 */
   .header { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
   .header h1 { font-size: 15px; }
@@ -464,7 +471,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
   .sidebar {
     width: auto; min-width: auto;
     margin: 8px 8px 0;
-    max-height: 160px;
+    max-height: 190px; /* 含车队下拉框，适当加高保证粘贴框可用 */
   }
   .sidebar-body textarea { font-size: 14px; }
   .content { margin: 6px 8px 8px; }
@@ -781,6 +788,14 @@ function setupRealtime() {
         if (isEditing) return; // 编辑中不刷新，避免丢失输入
         loadOrders();
       }
+    )
+    .subscribe();
+  // 车队表实时同步：其他用户增删车队时自动刷新下拉框/右键子菜单（正式库需 ADD TABLE fleets 到 publication）
+  supabase
+    .channel('fleets-channel')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'fleets' },
+      () => { loadFleets(); }
     )
     .subscribe();
 }
@@ -1101,7 +1116,7 @@ function renderFleetList() {
     const count = orders.filter(o => o['车队'] === f).length;
     return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid #f0f0f0;border-radius:6px;margin-bottom:6px;">
       <span style="font-size:13px;font-weight:500;">${esc(f)}<span style="color:#999;font-weight:400;font-size:12px;margin-left:6px;">${count} 条订单</span></span>
-      <button class="btn btn-danger btn-sm" onclick="deleteFleet('${esc(f)}')">删除</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteFleet('${escJs(f)}')">删除</button>
     </div>`;
   }).join('');
 }
@@ -1189,7 +1204,7 @@ function renderTable() {
 
   pageOrders.forEach((o, displayIdx) => {
     const orderNo = o['订单号'];
-    html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${esc(orderNo)}')">`;
+    html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${escJs(orderNo)}')">`;
     html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}" onclick="event.stopPropagation()"></td>`;
     html += `<td>${start + displayIdx + 1}</td>`;
     COLUMNS.forEach(col => {
@@ -1199,13 +1214,13 @@ function renderTable() {
         html += `<td>${esc(val) || '<span style="color:#d46b08;">未分配</span>'}</td>`;
       } else if (col === '派单情况') {
         const cls = val === '已派' ? 'tag-done' : val === '订单取消' ? 'tag-cancel' : 'tag-pending';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${esc(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
+        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
       } else if (col === '是否结算') {
         const cls = val === '是' ? 'tag-yes' : 'tag-no';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${esc(orderNo)}', '是否结算')">${esc(val)}</span></td>`;
+        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '是否结算')">${esc(val)}</span></td>`;
       } else if (['车号', '司机', '司机电话', '下车点'].includes(col)) {
         const addrCls = col === '下车点' ? ' col-addr' : '';
-        html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${esc(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
+        html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${escJs(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
       } else if (col === '上车点' || col === '服务标准' || col === '举牌服务') {
         html += `<td class="col-addr" title="${esc(val)}">${esc(val)}</td>`;
       } else {
@@ -1613,7 +1628,7 @@ function ctxAssignFleet() {
   const order = ctxOrderNo ? findOrderByNo(ctxOrderNo) : null;
   const current = order ? (order['车队'] || '') : '';
   let html = fleets.map(f =>
-    `<div class="ctx-item ctx-copy${f === current ? ' ctx-current' : ''}" onclick="doAssignFleet('${esc(f)}')">${f === current ? '✓ ' : ''}${esc(f)}</div>`
+    `<div class="ctx-item ctx-copy${f === current ? ' ctx-current' : ''}" onclick="doAssignFleet('${escJs(f)}')">${f === current ? '✓ ' : ''}${esc(f)}</div>`
   ).join('');
   if (html === '') html = '<div class="ctx-item" style="color:#999;cursor:default;">暂无车队，请先在「车队管理」添加</div>';
   if (current) html += `<div class="ctx-item ctx-copy" onclick="doAssignFleet('')">✕ 取消分配</div>`;
@@ -1673,7 +1688,12 @@ function exportCSV() {
 function esc(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, '&quot;'); // innerHTML 不转义引号，需补上防止属性断裂
+}
+
+// onclick 等 JS 字符串参数专用：在 esc 基础上转义反斜杠和单引号，防止参数含 ' 时内联 JS 语法错误
+function escJs(str) {
+  return esc(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 // 点击空白关闭弹窗
@@ -1716,6 +1736,40 @@ function syncHScroll() {
   }, true);
   // 窗口大小变化时重新同步
   window.addEventListener('resize', syncHScroll);
+})();
+
+// 移动端长按订单行 500ms 弹出右键菜单（兼容 iOS/Android）
+(function setupLongPress() {
+  const container = document.getElementById('tableArea');
+  let longPressTimer = null;
+  let longPressTriggered = false;
+
+  container.addEventListener('touchstart', (e) => {
+    const tr = e.target.closest('tr[data-no]');
+    if (!tr) return;
+    const orderNo = tr.getAttribute('data-no');
+    if (!orderNo) return;
+    longPressTriggered = false;
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true;
+      const touch = e.touches[0];
+      showCtxMenu({
+        preventDefault: () => {},
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      }, orderNo);
+      if (navigator.vibrate) navigator.vibrate(50); // 震动反馈
+    }, 500);
+  }, { passive: true });
+
+  container.addEventListener('touchend', (e) => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    if (longPressTriggered) e.preventDefault(); // 阻止后续 click，避免触发编辑
+  });
+
+  container.addEventListener('touchmove', () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  }, { passive: true });
 })();
 
 // 初始化：加载车队列表（自动填充筛选/导入下拉框）

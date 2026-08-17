@@ -978,20 +978,20 @@ function renderTable() {
 
   pageOrders.forEach((o, displayIdx) => {
     const orderNo = o['订单号'];
-    html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${esc(orderNo)}')">`;
+    html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${escJs(orderNo)}')">`;
     html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}" onclick="event.stopPropagation()"></td>`;
     html += `<td>${start + displayIdx + 1}</td>`;
     COLUMNS.forEach(col => {
       const val = o[col] || '';
       if (col === '派单情况') {
         const cls = val === '已派' ? 'tag-done' : val === '订单取消' ? 'tag-cancel' : 'tag-pending';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${esc(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
+        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
       } else if (col === '是否结算') {
         const cls = val === '是' ? 'tag-yes' : 'tag-no';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${esc(orderNo)}', '是否结算')">${esc(val)}</span></td>`;
+        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '是否结算')">${esc(val)}</span></td>`;
       } else if (['车号', '司机', '司机电话', '下车点'].includes(col)) {
         const addrCls = col === '下车点' ? ' col-addr' : '';
-        html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${esc(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
+        html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${escJs(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
       } else if (col === '上车点' || col === '服务标准' || col === '举牌服务') {
         html += `<td class="col-addr" title="${esc(val)}">${esc(val)}</td>`;
       } else {
@@ -1424,7 +1424,12 @@ function exportCSV() {
 function esc(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, '&quot;'); // innerHTML 不转义引号，需补上防止属性断裂
+}
+
+// onclick 等 JS 字符串参数专用：在 esc 基础上转义反斜杠和单引号，防止参数含 ' 时内联 JS 语法错误
+function escJs(str) {
+  return esc(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 // 点击空白关闭弹窗

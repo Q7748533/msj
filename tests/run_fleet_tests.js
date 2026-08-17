@@ -1,9 +1,9 @@
 /**
- * 车队添加/删除 · 密码验证流程单元测试（Node 零依赖，供 CI 使用）
+ * 车队添加/删除 · 密码验证流程 + esc/escJs 转义单元测试（Node 零依赖，供 CI 使用）
  *
  * 原理：从源 HTML 文件直接提取被测函数（verifyPassword/confirmPwd/cancelPwd/
- * addFleet/deleteFleet），在 vm 沙箱中配合 DOM/数据库替身执行——测试的是真实
- * 源码，杜绝"复制函数导致测试与实现脱节"的漂移问题。
+ * addFleet/deleteFleet/esc/escJs），在 vm 沙箱中配合 DOM/数据库替身执行——测试
+ * 的是真实源码，杜绝"复制函数导致测试与实现脱节"的漂移问题。
  *
  * 运行：node tests/run_fleet_tests.js   （失败时退出码 1，CI 据此拦截）
  */
@@ -13,7 +13,7 @@ const vm = require('vm');
 
 // ============ 1. 定位源文件（优先正式页面；车队功能未合并时回退测试页面） ============
 const CANDIDATES = ['index.html', 'index_test.html'];
-const FN_NAMES = ['verifyPassword', 'confirmPwd', 'cancelPwd', 'addFleet', 'deleteFleet'];
+const FN_NAMES = ['verifyPassword', 'confirmPwd', 'cancelPwd', 'addFleet', 'deleteFleet', 'esc', 'escJs'];
 
 function pickSource() {
   for (const f of CANDIDATES) {
@@ -66,11 +66,21 @@ function makeCtx() {
     return elements[id];
   }
   const sandbox = {
-    document: { getElementById: el },
+    document: {
+      getElementById: el,
+      // 供 esc() 使用：textContent 存原文，innerHTML 读取时按浏览器规则转义（& < >，不含引号）
+      createElement: () => {
+        let text = '';
+        return {
+          set textContent(v) { text = String(v); },
+          get textContent() { return text; },
+          get innerHTML() { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+        };
+      }
+    },
     setTimeout: () => {},  // 跳过 verifyPassword 的自动聚焦
     alert: m => state.alerts.push(m),
     confirm: m => { state.confirms.push(m); return state.confirmReturn; },
-    esc: s => s,
     orders: [],
     fleets: ['一队', '二队', '三队'],
     // mock fleets 表：记录 insert/delete 调用参数
@@ -216,6 +226,27 @@ const TESTS = [
     cancelPwdUI(c);
     assertEqual(c.state.deletes.length, 0, '密码取消不应删除');
     assertEqual(c.state.loadFleetsCalls.n, 0, '不应刷新车队列表');
+  }],
+
+  // ---- D组：esc / escJs 转义（防内联 JS 注入回归） ----
+  ['D1 esc 转义 HTML 特殊字符（含双引号）', c => {
+    assertEqual(c.fn.esc('A"B<C>&D'), 'A&quot;B&lt;C&gt;&amp;D', 'esc 应转义 " < > &');
+    assert(!c.fn.esc('A"B').includes('"'), 'esc 输出不应含裸双引号');
+  }],
+  ['D2 escJs 转义单引号和反斜杠（JS 字符串安全）', c => {
+    assertEqual(c.fn.escJs("A'B\\C"), "A\\'B\\\\C", 'escJs 应将 \' → \\' 、\\ → \\\\');
+    assertEqual(c.fn.escJs('A"B'), 'A&quot;B', 'escJs 应保留 esc 的 &quot; 转义');
+  }],
+  ['D3 escJs 完整链路往返：HTML解码→JS求值还原原文', c => {
+    // 模拟浏览器行为：onclick 属性值先经 HTML 解码，再作为 JS 执行
+    const htmlDecode = s => s
+      .replace(/&quot;/g, '"').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const original = "王's\"车\\队&A<B>把'day";
+    const attr = c.fn.escJs(original);            // 写入 onclick='...' 的内容
+    const jsSource = `'${htmlDecode(attr)}'`;     // HTML 解码后的 JS 字符串字面量
+    const evaluated = eval(`(function(){ return ${jsSource}; })()`);
+    assertEqual(evaluated, original, '经 HTML 解码 + JS 求值应无损还原原文');
   }]
 ];
 
