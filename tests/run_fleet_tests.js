@@ -15,7 +15,8 @@ const vm = require('vm');
 // ============ 1. 定位源文件（优先正式页面；车队功能未合并时回退测试页面） ============
 const CANDIDATES = ['index.html', 'index_test.html'];
 const FN_NAMES = ['verifyPassword', 'confirmPwd', 'cancelPwd', 'addFleet', 'deleteFleet', 'esc', 'escJs',
-  'isFleet', 'canEditField', 'checkLogin', 'doLogin', 'enterApp', 'applyRoleView'];
+  'isFleet', 'canEditField', 'checkLogin', 'doLogin', 'enterApp', 'applyRoleView',
+  'openBatchFleet', 'closeBatchFleet', 'doBatchAssign'];
 
 function pickSource() {
   for (const f of CANDIDATES) {
@@ -56,8 +57,9 @@ function makeCtx() {
   const state = {
     alerts: [], confirms: [], successes: [],
     confirmReturn: true,
-    inserts: [], deletes: [],
-    loadFleetsCalls: { n: 0 }
+    inserts: [], deletes: [], updates: [],
+    loadFleetsCalls: { n: 0 },
+    selectedNos: []
   };
   const elements = {};
   function el(id) {
@@ -101,6 +103,8 @@ function makeCtx() {
     fleets: ['一队', '二队', '三队'],
     renderTable: () => {},          // applyRoleView 末尾刷新表格（沙箱内空操作）
     updateUserBadge: () => {},      // applyRoleView 末尾刷新身份徽章（沙箱内空操作）
+    loadOrders: () => {},           // doBatchAssign 成功后刷新订单（沙箱内空操作）
+    getSelectedOrderNos: () => state.selectedNos, // 勾选的订单号（用例可设置）
     // mock fleets 表：记录 insert/delete 调用参数
     getSupabase: () => ({
       from: table => {
@@ -353,6 +357,62 @@ const TESTS = [
     assertEqual(c.state.inserts.length, 0, '车队视图不应能添加车队');
     assert(!isPwdOpen(c), '车队视图不应弹操作密码框');
     assertEqual(c.state.loadFleetsCalls.n, 0, '不应刷新车队列表');
+  }],
+
+  // ---- G组：批量分配车队（阶段2，仅调度） ----
+  ['G1 未勾选订单 → alert拦截，不弹选择窗', c => {
+    c.state.selectedNos = [];
+    c.fn.openBatchFleet();
+    assert(c.state.alerts.some(m => m.includes('勾选')), '未勾选应 alert 提示');
+    assert(!c.el('batchFleetOverlay').classList.contains('show'), '不应弹批量分配窗');
+  }],
+  ['G2 无车队可用 → alert拦截', c => {
+    c.state.selectedNos = ['YD001'];
+    c.fn.fleets = [];
+    c.fn.openBatchFleet();
+    assert(c.state.alerts.some(m => m.includes('车队管理')), '无车队应提示先去车队管理添加');
+    assert(!c.el('batchFleetOverlay').classList.contains('show'), '不应弹批量分配窗');
+  }],
+  ['G3 勾选+有车队 → 弹窗展示数量和车队选项+取消分配', c => {
+    c.state.selectedNos = ['YD001', 'YD002'];
+    c.fn.openBatchFleet();
+    assert(c.el('batchFleetOverlay').classList.contains('show'), '应弹批量分配窗');
+    assert(c.el('batchFleetInfo').textContent.includes('2'), '信息栏应显示勾选数量');
+    const html = c.el('batchFleetOptions').innerHTML;
+    assert(html.includes('一队') && html.includes('三队'), '选项应含所有车队');
+    assert(html.includes('取消分配'), '应有取消分配选项');
+  }],
+  ['G4 doBatchAssign 成功 → 批量更新车队字段+成功提示+刷新', c => {
+    c.state.selectedNos = ['YD001', 'WD004'];
+    c.fn.getSupabase = () => ({
+      from: t => {
+        if (t !== 'orders') throw new Error('本用例只应访问 orders 表: ' + t);
+        return {
+          update: patch => ({
+            in: (col, vals) => ({ then: cb => {
+              c.state.updates.push({ patch, col, vals });
+              cb({ error: null });
+            }})
+          })
+        };
+      }
+    });
+    c.fn.doBatchAssign('二队');
+    assertEqual(c.state.updates.length, 1, '应调用一次批量更新');
+    assertEqual(c.state.updates[0].patch, { 车队: '二队' }, '应更新车队字段');
+    assertEqual(c.state.updates[0].col, '订单号', '应按订单号过滤');
+    assertEqual(c.state.updates[0].vals, ['YD001', 'WD004'], '应只更新勾选的订单');
+    assert(!c.el('batchFleetOverlay').classList.contains('show'), '完成后应关闭弹窗');
+    assert(c.state.successes.some(m => m.includes('2 条') && m.includes('二队')), '应显示成功提示');
+  }],
+  ['G5 车队视图 → openBatchFleet/doBatchAssign 均被守卫拦截', c => {
+    c.fn.userRole = 'fleet';
+    c.state.selectedNos = ['YD001'];
+    c.fn.openBatchFleet();
+    assert(!c.el('batchFleetOverlay').classList.contains('show'), '车队视图不应弹批量分配窗');
+    c.fn.getSupabase = () => { throw new Error('车队视图不应触达数据库'); };
+    c.fn.doBatchAssign('二队');
+    assertEqual(c.state.updates.length, 0, '车队视图不应执行批量更新');
   }]
 ];
 

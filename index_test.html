@@ -613,6 +613,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
       <input type="text" class="search-input" id="searchInput" placeholder="搜索订单号/司机/车号..." oninput="doSearch()">
       <div class="actions">
         <button class="btn btn-default btn-sm" onclick="exportCSV()">导出CSV</button>
+        <button class="btn btn-default btn-sm admin-only" onclick="openBatchFleet()">批量分配</button>
         <button class="btn btn-danger btn-sm admin-only" onclick="batchDelete()">批量删除</button>
         <button class="btn btn-danger btn-sm admin-only" onclick="clearOrders()">清空列表</button>
       </div>
@@ -672,6 +673,18 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
     <div style="font-size:11px;color:#999;line-height:1.5;">添加/删除车队需输入密码；车队下有订单时无法删除；车队密码用于「车队入口」登录（添加时设置）</div>
     <div class="modal-actions">
       <button class="btn btn-primary" onclick="closeFleetModal()">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量分配车队弹窗 -->
+<div class="modal-overlay" id="batchFleetOverlay">
+  <div class="modal">
+    <h3>批量分配车队</h3>
+    <div style="color:#999;font-size:12px;margin-bottom:10px;" id="batchFleetInfo"></div>
+    <div class="modal-options" id="batchFleetOptions"></div>
+    <div class="modal-actions">
+      <button class="btn btn-default" onclick="closeBatchFleet()">取消</button>
     </div>
   </div>
 </div>
@@ -776,6 +789,12 @@ function getSupabase() {
       update: (patch) => ({
         eq: (col, val) => ({ then: (cb) => {
           testDB.forEach(o => { if (o[col] === val) Object.assign(o, patch); });
+          persistTest();
+          cb({ error: null });
+        }}),
+        in: (col, vals) => ({ then: (cb) => {
+          // 批量分配车队：update().in('订单号', nos)
+          testDB.forEach(o => { if (vals.includes(o[col])) Object.assign(o, patch); });
           persistTest();
           cb({ error: null });
         }})
@@ -1796,6 +1815,38 @@ function batchDelete() {
     const { error } = await getSupabase().from('orders').delete().in('订单号', nos);
     if (error) { alert('删除失败: ' + error.message); return; }
     loadOrders();
+  });
+}
+
+// ============ 批量分配车队 ============
+// 打开弹窗：勾选订单 → 选目标车队 → 一键分配（仅调度）
+function openBatchFleet() {
+  if (isFleet()) return; // 车队视图无分配权限
+  const nos = getSelectedOrderNos();
+  if (nos.length === 0) { alert('请先勾选要分配的订单'); return; }
+  if (fleets.length === 0) { alert('暂无车队，请先在「车队管理」添加'); return; }
+  document.getElementById('batchFleetInfo').textContent = `已勾选 ${nos.length} 条订单，选择目标车队：`;
+  const opts = document.getElementById('batchFleetOptions');
+  opts.innerHTML = fleets.map(f =>
+    `<div class="opt" onclick="doBatchAssign('${escJs(f)}')">${esc(f)}</div>`
+  ).join('') + `<div class="opt" style="color:#ff4d4f;" onclick="doBatchAssign('')">✕ 取消分配</div>`;
+  document.getElementById('batchFleetOverlay').classList.add('show');
+}
+
+function closeBatchFleet() {
+  document.getElementById('batchFleetOverlay').classList.remove('show');
+}
+
+// 执行批量分配（车队传空字符串 = 取消分配）
+function doBatchAssign(fleet) {
+  if (isFleet()) { closeBatchFleet(); return; } // 车队视图无分配权限
+  const nos = getSelectedOrderNos();
+  closeBatchFleet();
+  if (nos.length === 0) return;
+  getSupabase().from('orders').update({ '车队': fleet }).in('订单号', nos).then(({ error }) => {
+    if (error) { alert('批量分配失败: ' + error.message); return; }
+    loadOrders();
+    showSuccess(fleet ? `${nos.length} 条订单已分配到 ${fleet}` : `${nos.length} 条订单已取消分配`);
   });
 }
 
