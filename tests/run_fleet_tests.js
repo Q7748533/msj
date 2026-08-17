@@ -234,7 +234,7 @@ const TESTS = [
     assert(!c.fn.esc('A"B').includes('"'), 'esc 输出不应含裸双引号');
   }],
   ['D2 escJs 转义单引号和反斜杠（JS 字符串安全）', c => {
-    assertEqual(c.fn.escJs("A'B\\C"), "A\\'B\\\\C", 'escJs 应将 \' → \\' 、\\ → \\\\');
+    assertEqual(c.fn.escJs("A'B\\C"), "A\\'B\\\\C", "escJs 应将 ' → \\' 、\\ → \\\\（JS字面量安全）");
     assertEqual(c.fn.escJs('A"B'), 'A&quot;B', 'escJs 应保留 esc 的 &quot; 转义');
   }],
   ['D3 escJs 完整链路往返：HTML解码→JS求值还原原文', c => {
