@@ -1,8 +1,9 @@
 /**
- * 车队添加/删除 · 密码验证流程 + esc/escJs 转义 + 源码语法完整性单元测试（Node 零依赖，供 CI 使用）
+ * 车队添加/删除 · 密码验证流程 + esc/escJs 转义 + 源码语法完整性 + 身份入口权限单元测试（Node 零依赖，供 CI 使用）
  *
  * 原理：从源 HTML 文件直接提取被测函数（verifyPassword/confirmPwd/cancelPwd/
- * addFleet/deleteFleet/esc/escJs），在 vm 沙箱中配合 DOM/数据库替身执行——测试
+ * addFleet/deleteFleet/esc/escJs/checkLogin/doLogin/enterApp/applyRoleView/
+ * isFleet/canEditField），在 vm 沙箱中配合 DOM/数据库替身执行——测试
  * 的是真实源码，杜绝"复制函数导致测试与实现脱节"的漂移问题。
  *
  * 运行：node tests/run_fleet_tests.js   （失败时退出码 1，CI 据此拦截）
@@ -13,7 +14,8 @@ const vm = require('vm');
 
 // ============ 1. 定位源文件（优先正式页面；车队功能未合并时回退测试页面） ============
 const CANDIDATES = ['index.html', 'index_test.html'];
-const FN_NAMES = ['verifyPassword', 'confirmPwd', 'cancelPwd', 'addFleet', 'deleteFleet', 'esc', 'escJs'];
+const FN_NAMES = ['verifyPassword', 'confirmPwd', 'cancelPwd', 'addFleet', 'deleteFleet', 'esc', 'escJs',
+  'isFleet', 'canEditField', 'checkLogin', 'doLogin', 'enterApp', 'applyRoleView'];
 
 function pickSource() {
   for (const f of CANDIDATES) {
@@ -43,7 +45,11 @@ function extractFunction(html, name) {
 }
 
 const HTML = pickSource();
-const EXTRACTED_CODE = ['var pwdCallback = null;', ...FN_NAMES.map(n => extractFunction(HTML, n))].join('\n');
+// 前置声明被提取函数引用到的全局变量（源文件中为 let 声明，沙箱中用 var 等价初始化为初值）
+const PRELUDE = `var pwdCallback = null, userRole = null, userFleet = '', loginRole = null, fleetFilter = 'all', currentPage = 1;
+var fleetPws = {};
+var EDITABLE_FIELDS = ['车号', '司机', '司机电话'];`;
+const EXTRACTED_CODE = [PRELUDE, ...FN_NAMES.map(n => extractFunction(HTML, n))].join('\n');
 
 // ============ 2. 沙箱工厂：每个用例全新环境（DOM 替身 + mock 数据库 + 拦截器） ============
 function makeCtx() {
@@ -68,6 +74,7 @@ function makeCtx() {
   const sandbox = {
     document: {
       getElementById: el,
+      body: el('body'), // 供 applyRoleView 切换 fleet-view 类
       // 供 esc() 使用：textContent 存原文，innerHTML 读取时按浏览器规则转义（& < >，不含引号）
       createElement: () => {
         let text = '';
@@ -78,11 +85,22 @@ function makeCtx() {
         };
       }
     },
+    // sessionStorage 替身（供 enterApp/restoreSession 读写会话）
+    sessionStorage: (() => {
+      const s = {};
+      return {
+        getItem: k => (k in s ? s[k] : null),
+        setItem: (k, v) => { s[k] = String(v); },
+        removeItem: k => { delete s[k]; }
+      };
+    })(),
     setTimeout: () => {},  // 跳过 verifyPassword 的自动聚焦
     alert: m => state.alerts.push(m),
     confirm: m => { state.confirms.push(m); return state.confirmReturn; },
     orders: [],
     fleets: ['一队', '二队', '三队'],
+    renderTable: () => {},          // applyRoleView 末尾刷新表格（沙箱内空操作）
+    updateUserBadge: () => {},      // applyRoleView 末尾刷新身份徽章（沙箱内空操作）
     // mock fleets 表：记录 insert/delete 调用参数
     getSupabase: () => ({
       from: table => {
@@ -172,12 +190,13 @@ const TESTS = [
     assert(!isPwdOpen(c), '重名不应弹密码框');
     assertEqual(c.state.inserts.length, 0, '重名不应插入');
   }],
-  ['B3 添加-有效名称+密码正确 → 插入+刷新+提示', c => {
+  ['B3 添加-有效名称+密码正确 → 插入(含车队密码)+刷新+提示', c => {
     c.el('newFleetName').value = '四队';
+    c.el('newFleetPwd').value = '444';
     c.fn.addFleet();
     assert(isPwdOpen(c), '有效名称应弹密码框');
     enterPwd(c, '888');
-    assertEqual(c.state.inserts, [{ 名称: '四队' }], '正确密码后应插入新车队');
+    assertEqual(c.state.inserts, [{ 名称: '四队', 密码: '444' }], '正确密码后应插入新车队（含登录密码）');
     assertEqual(c.state.loadFleetsCalls.n, 1, '应刷新车队列表');
     assert(c.state.successes.some(m => m.includes('四队') && m.includes('已添加')), '应显示成功提示');
     assert(c.el('newFleetName').value === '', '成功后输入框应清空');
@@ -263,6 +282,75 @@ const TESTS = [
       }
     }
     assert(blocks >= 1, '未匹配到任何裸<script>块，正则可能需要更新');
+  }],
+
+  // ---- F组：身份入口（阶段2 车队登录 + 权限隔离） ----
+  ['F1 checkLogin 调度密码888 → 通过', c => {
+    assertEqual(c.fn.checkLogin('admin', '', '888'), true, '调度密码 888 应通过');
+  }],
+  ['F2 checkLogin 调度密码错误 → 拒绝', c => {
+    assertEqual(c.fn.checkLogin('admin', '', '000'), false, '调度密码错误应拒绝');
+    assertEqual(c.fn.checkLogin('admin', '', ''), false, '调度密码为空应拒绝');
+  }],
+  ['F3 checkLogin 车队选队+密码正确 → 通过', c => {
+    c.fn.fleetPws = { '一队': '111', '二队': '222', '三队': '' };
+    assertEqual(c.fn.checkLogin('fleet', '一队', '111'), true, '一队密码 111 应通过');
+  }],
+  ['F4 checkLogin 车队密码串队（一队输二队密码）→ 拒绝', c => {
+    c.fn.fleetPws = { '一队': '111', '二队': '222' };
+    assertEqual(c.fn.checkLogin('fleet', '一队', '222'), false, '一队输二队密码应拒绝');
+  }],
+  ['F5 checkLogin 未设密码车队/空密码/未知角色 → 拒绝', c => {
+    c.fn.fleetPws = { '一队': '111', '三队': '' };
+    assertEqual(c.fn.checkLogin('fleet', '三队', ''), false, '未设密码的车队应拒绝登录');
+    assertEqual(c.fn.checkLogin('fleet', '一队', ''), false, '空密码应拒绝');
+    assertEqual(c.fn.checkLogin('guest', '一队', '111'), false, '未知角色应拒绝');
+  }],
+  ['F6 doLogin 车队登录成功 → 锁定本车队视图', c => {
+    c.fn.fleetPws = { '一队': '111' };
+    c.fn.loginRole = 'fleet';
+    c.el('loginFleet').value = '一队';
+    c.el('loginPwd').value = '111';
+    c.fn.doLogin();
+    assertEqual(c.fn.userRole, 'fleet', '登录后 userRole 应为 fleet');
+    assertEqual(c.fn.userFleet, '一队', '登录后 userFleet 应为 一队');
+    assertEqual(c.fn.fleetFilter, '一队', '车队筛选应锁定为本车队');
+    assert(c.el('fleetFilter').disabled === true, '车队筛选下拉应禁用');
+    assert(c.el('body').classList.contains('fleet-view'), 'body 应加 fleet-view 类（隐藏调度功能）');
+    assert(!c.el('loginOverlay').classList.contains('show'), '登录层应关闭');
+    assert(c.el('loginError').style.display === 'none', '不应显示错误提示');
+  }],
+  ['F7 doLogin 车队密码错误 → 保持登录层，提示错误', c => {
+    c.fn.fleetPws = { '一队': '111' };
+    c.fn.loginRole = 'fleet';
+    c.el('loginFleet').value = '一队';
+    c.el('loginPwd').value = '000';
+    c.fn.doLogin();
+    assertEqual(c.fn.userRole, null, '密码错误不应进入');
+    assert(c.el('loginError').style.display === 'block', '应显示错误提示');
+    assert(c.el('loginPwd').value === '', '错误后密码框应清空');
+  }],
+  ['F8 canEditField 车队视图 → 仅 车号/司机/司机电话 可编辑', c => {
+    c.fn.userRole = 'fleet';
+    assertEqual(c.fn.canEditField('车号'), true, '车队可编辑 车号');
+    assertEqual(c.fn.canEditField('司机'), true, '车队可编辑 司机');
+    assertEqual(c.fn.canEditField('司机电话'), true, '车队可编辑 司机电话');
+    assertEqual(c.fn.canEditField('派单情况'), false, '车队不可改 派单情况');
+    assertEqual(c.fn.canEditField('是否结算'), false, '车队不可改 是否结算');
+  }],
+  ['F9 canEditField 调度视图 → 任意字段可编辑', c => {
+    c.fn.userRole = 'admin';
+    assertEqual(c.fn.canEditField('派单情况'), true, '调度可改 派单情况');
+    assertEqual(c.fn.canEditField('是否结算'), true, '调度可改 是否结算');
+    assertEqual(c.fn.canEditField('司机'), true, '调度可改 司机');
+  }],
+  ['F10 车队视图调用 addFleet → 被权限守卫拦截', c => {
+    c.fn.userRole = 'fleet';
+    c.el('newFleetName').value = '四队';
+    c.fn.addFleet();
+    assertEqual(c.state.inserts.length, 0, '车队视图不应能添加车队');
+    assert(!isPwdOpen(c), '车队视图不应弹操作密码框');
+    assertEqual(c.state.loadFleetsCalls.n, 0, '不应刷新车队列表');
   }]
 ];
 
