@@ -1,5 +1,5 @@
 /**
- * 车队添加/删除 · 密码验证流程 + esc/escJs 转义单元测试（Node 零依赖，供 CI 使用）
+ * 车队添加/删除 · 密码验证流程 + esc/escJs 转义 + 源码语法完整性单元测试（Node 零依赖，供 CI 使用）
  *
  * 原理：从源 HTML 文件直接提取被测函数（verifyPassword/confirmPwd/cancelPwd/
  * addFleet/deleteFleet/esc/escJs），在 vm 沙箱中配合 DOM/数据库替身执行——测试
@@ -247,6 +247,22 @@ const TESTS = [
     const jsSource = `'${htmlDecode(attr)}'`;     // HTML 解码后的 JS 字符串字面量
     const evaluated = eval(`(function(){ return ${jsSource}; })()`);
     assertEqual(evaluated, original, '经 HTML 解码 + JS 求值应无损还原原文');
+  }],
+
+  // ---- E组：源码语法完整性（防 SyntaxError 上线） ----
+  ['E1 两页面内联<script>整块语法合法（vm编译不执行）', () => {
+    const files = CANDIDATES.filter(f => fs.existsSync(path.join(__dirname, '..', f)));
+    assert(files.length > 0, '未找到任何源HTML文件');
+    let blocks = 0;
+    for (const f of files) {
+      const html = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+      for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+        blocks++;
+        try { new vm.Script(m[1], { filename: f }); }  // 只编译不执行：模板字符串/转义/括号等语法错误在此暴露
+        catch (e) { throw new Error(`${f} 内联脚本语法错误: ${e.message}`); }
+      }
+    }
+    assert(blocks >= 1, '未匹配到任何裸<script>块，正则可能需要更新');
   }]
 ];
 

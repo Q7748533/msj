@@ -19,5 +19,8 @@ jobs:
         with:
           node-version: 20
 
+      - name: 语法检查测试代码
+        run: node --check tests/run_fleet_tests.js
+
       - name: 运行测试
         run: node tests/run_fleet_tests.js
