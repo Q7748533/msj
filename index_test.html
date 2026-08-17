@@ -848,8 +848,13 @@ function sortOrders(list) {
     const aSorted = a['派单情况'] === '已派' || a['派单情况'] === '订单取消';
     const bSorted = b['派单情况'] === '已派' || b['派单情况'] === '订单取消';
     if (aSorted && bSorted) {
-      // 格式 YYYY-MM-DD HH:MM:SS 可直接字符串比较
-      return (a['服务日期'] || '').localeCompare(b['服务日期'] || '');
+      // 格式 YYYY-MM-DD HH:MM:SS 可直接字符串比较；空日期按 id 兜底排末尾
+      const aDate = a['服务日期'] || '';
+      const bDate = b['服务日期'] || '';
+      if (aDate && bDate) return aDate.localeCompare(bDate);
+      if (aDate) return -1;  // a有日期排前
+      if (bDate) return 1;   // b有日期排前
+      return (a.id || 0) - (b.id || 0);  // 都空按id
     }
     if (aSorted) return -1;  // 已派/取消排前
     if (bSorted) return 1;
@@ -1737,14 +1742,17 @@ function showToast(msg) {
 }
 
 // 成功提示：绿色样式，3 秒后自动消失，期间锁定不被派单提醒覆盖
+let successTimer = null;
 function showSuccess(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
   toast.className = 'toast show success';
   toastLock = true;
-  setTimeout(() => {
+  if (successTimer) clearTimeout(successTimer); // 清除前一次 timer，避免提前关闭
+  successTimer = setTimeout(() => {
     toast.className = 'toast';
     toastLock = false;
+    successTimer = null;
     checkDriverReady(); // 恢复派单提醒状态
   }, 3000);
 }
