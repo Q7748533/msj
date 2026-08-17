@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>车队密码流程单元测试</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f0f2f5; padding: 24px; }
+h1 { font-size: 18px; margin-bottom: 6px; }
+.note { font-size: 12px; color: #999; margin-bottom: 16px; line-height: 1.6; }
+.summary { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+.case { padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; background: #fff; }
+.case.pass { border-left: 4px solid #52c41a; color: #389e0d; }
+.case.fail { border-left: 4px solid #ff4d4f; color: #cf1322; }
+.case .msg { display: block; font-size: 12px; color: #999; margin-top: 4px; }
+#testDom { display: none; }
+</style>
+</head>
+<body>
+
+<h1>车队添加/删除 · 密码验证流程单元测试</h1>
+<div class="note">
+  CI（GitHub Actions）已通过 tests/run_fleet_tests.js <strong>直接对源码</strong>运行本套用例，每次 push 自动执行，以 CI 为准。<br>
+  本页函数为手动复制，仅作本地浏览器快速验证；修改源码后请以 CI 结果为准。
+</div>
+<div class="summary" id="summary">运行中...</div>
+<div id="results"></div>
+
+<!-- 被测函数依赖的最小 DOM 结构（与 index_test.html 中 id 一致） -->
+<div id="testDom">
+  <div class="modal-overlay" id="pwdOverlay">
+    <input type="password" id="pwdInput">
+    <div id="pwdError"></div>
+  </div>
+  <input type="text" id="newFleetName">
+  <div id="fleetList"></div>
+  <div id="toast"></div>
+</div>
+
+<script>
+// ================= 测试基建（迷你断言框架，零依赖） =================
+let passed = 0, failed = 0;
+function pass(name) {
+  passed++;
+  document.getElementById('results').innerHTML += `<div class="case pass">✓ ${name}</div>`;
+}
+function fail(name, msg) {
+  failed++;
+  document.getElementById('results').innerHTML += `<div class="case fail">✗ ${name}<span class="msg">${msg}</span></div>`;
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || '断言失败'); }
+function assertEqual(actual, expected, msg) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${msg || '不相等'}：期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}`);
+  }
+}
+
+// ================= 环境替身（stub） =================
+let alertCalls = [];        // 拦截 alert
+let confirmMsgs = [];       // 拦截 confirm
+let confirmReturn = true;   // confirm 的可配置返回值
+let successMsgs = [];       // 拦截 showSuccess
+let loadFleetsCalls = 0;    // 拦截 loadFleets
+let insertCalls = [];       // mock fleets 表 insert 记录
+let deleteCalls = [];       // mock fleets 表 delete 记录
+
+window.alert = (msg) => alertCalls.push(msg);
+window.confirm = (msg) => { confirmMsgs.push(msg); return confirmReturn; };
+function showSuccess(msg) { successMsgs.push(msg); }
+function loadFleets() { loadFleetsCalls++; }
+
+// Mock Supabase：仅实现 fleets 表的 insert/delete，记录调用参数
+function getSupabase() {
+  return {
+    from: (table) => {
+      if (table !== 'fleets') throw new Error('本测试只应访问 fleets 表，实际访问了: ' + table);
+      return {
+        insert: (rows) => ({ then: (cb) => { insertCalls.push(rows); cb({ error: null }); } }),
+        delete: () => ({ eq: (col, val) => ({ then: (cb) => { deleteCalls.push({ col, val }); cb({ error: null }); } }) })
+      };
+    }
+  };
+}
+
+// ================= 被测函数（复制自 index_test.html，勿改逻辑） =================
+let orders = [];
+let fleets = [];
+let pwdCallback = null;
+
+function verifyPassword(callback) {
+  pwdCallback = callback;
+  document.getElementById('pwdInput').value = '';
+  document.getElementById('pwdError').style.display = 'none';
+  document.getElementById('pwdOverlay').classList.add('show');
+  setTimeout(() => document.getElementById('pwdInput').focus(), 100);
+}
+
+function confirmPwd() {
+  const pwd = document.getElementById('pwdInput').value;
+  if (pwd === '888') {
+    document.getElementById('pwdOverlay').classList.remove('show');
+    if (pwdCallback) { const cb = pwdCallback; pwdCallback = null; cb(true); }
+  } else {
+    document.getElementById('pwdError').style.display = 'block';
+    document.getElementById('pwdInput').value = '';
+    document.getElementById('pwdInput').focus();
+  }
+}
+
+function cancelPwd() {
+  document.getElementById('pwdOverlay').classList.remove('show');
+  if (pwdCallback) { const cb = pwdCallback; pwdCallback = null; cb(false); }
+}
+
+function addFleet() {
+  const input = document.getElementById('newFleetName');
+  const name = input.value.trim();
+  if (!name) { alert('请输入车队名称'); return; }
+  if (fleets.includes(name)) { alert('车队「' + name + '」已存在'); return; }
+  verifyPassword(function(ok) {
+    if (!ok) return;
+    getSupabase().from('fleets').insert({ 名称: name }).then(({ error }) => {
+      if (error) { alert('添加失败: ' + error.message); return; }
+      input.value = '';
+      loadFleets();
+      showSuccess(`车队「${name}」已添加`);
+    });
+  });
+}
+
+function deleteFleet(name) {
+  const count = orders.filter(o => o['车队'] === name).length;
+  if (count > 0) { alert(`车队「${name}」下还有 ${count} 条订单，请先重新分配或删除订单`); return; }
+  if (!confirm(`确定删除车队「${name}」？`)) return;
+  verifyPassword(function(ok) {
+    if (!ok) return;
+    getSupabase().from('fleets').delete().eq('名称', name).then(({ error }) => {
+      if (error) { alert('删除失败: ' + error.message); return; }
+      loadFleets();
+      showSuccess(`车队「${name}」已删除`);
+    });
+  });
+}
+
+// ================= 测试驱动辅助 =================
+function enterPwd(pwd) {
+  document.getElementById('pwdInput').value = pwd;
+  confirmPwd();
+}
+function cancelPwdUI() { cancelPwd(); }
+function isPwdOpen() { return document.getElementById('pwdOverlay').classList.contains('show'); }
+
+function reset() {
+  fleets = ['一队', '二队', '三队'];
+  orders = [];
+  alertCalls = []; confirmMsgs = []; confirmReturn = true;
+  successMsgs = []; loadFleetsCalls = 0;
+  insertCalls = []; deleteCalls = [];
+  pwdCallback = null;
+  document.getElementById('pwdOverlay').classList.remove('show');
+  document.getElementById('pwdInput').value = '';
+  document.getElementById('pwdError').style.display = 'none';
+  document.getElementById('newFleetName').value = '';
+}
+
+// ================= 测试用例 =================
+
+// ---- A组：密码验证核心 ----
+async function tA1() {
+  let result = null;
+  verifyPassword(ok => { result = ok; });
+  assert(isPwdOpen(), '密码弹窗应打开');
+  enterPwd('888');
+  assertEqual(result, true, '正确密码应回调 true');
+  assert(!isPwdOpen(), '验证成功后弹窗应关闭');
+}
+
+async function tA2() {
+  let called = false;
+  verifyPassword(ok => { called = true; });
+  enterPwd('000');
+  assert(!called, '错误密码不应触发回调');
+  assert(isPwdOpen(), '错误密码后弹窗应保持打开');
+  assert(document.getElementById('pwdError').style.display === 'block', '应显示错误提示');
+  assert(document.getElementById('pwdInput').value === '', '错误后输入框应清空');
+}
+
+async function tA3() {
+  let result = null;
+  verifyPassword(ok => { result = ok; });
+  enterPwd('000');           // 先输错
+  enterPwd('888');           // 再输对
+  assertEqual(result, true, '错误后重新输入正确密码应回调 true');
+  assert(!isPwdOpen(), '弹窗应关闭');
+}
+
+async function tA4() {
+  let result = null;
+  verifyPassword(ok => { result = ok; });
+  cancelPwdUI();
+  assertEqual(result, false, '取消应回调 false');
+  assert(!isPwdOpen(), '取消后弹窗应关闭');
+  assertEqual(pwdCallback, null, '取消后 pwdCallback 应清空');
+}
+
+async function tA5() {
+  // 先污染状态：残留输入和错误提示
+  document.getElementById('pwdInput').value = '999';
+  document.getElementById('pwdError').style.display = 'block';
+  verifyPassword(() => {});
+  assert(document.getElementById('pwdInput').value === '', '打开弹窗应清空上次输入');
+  assert(document.getElementById('pwdError').style.display === 'none', '打开弹窗应隐藏错误提示');
+  cancelPwdUI(); // 清理
+}
+
+// ---- B组：addFleet 添加车队 ----
+async function tB1() {
+  document.getElementById('newFleetName').value = '   ';
+  addFleet();
+  assert(alertCalls.includes('请输入车队名称'), '空名称应 alert 提示');
+  assert(!isPwdOpen(), '空名称不应弹密码框');
+  assertEqual(insertCalls.length, 0, '空名称不应插入');
+}
+
+async function tB2() {
+  document.getElementById('newFleetName').value = '一队';
+  addFleet();
+  assert(alertCalls.some(m => m.includes('已存在')), '重名应 alert 提示');
+  assert(!isPwdOpen(), '重名不应弹密码框');
+  assertEqual(insertCalls.length, 0, '重名不应插入');
+}
+
+async function tB3() {
+  document.getElementById('newFleetName').value = '四队';
+  addFleet();
+  assert(isPwdOpen(), '有效名称应弹密码框');
+  enterPwd('888');
+  assertEqual(insertCalls, [{ 名称: '四队' }], '正确密码后应插入新车队');
+  assertEqual(loadFleetsCalls, 1, '应刷新车队列表');
+  assert(successMsgs.some(m => m.includes('四队') && m.includes('已添加')), '应显示成功提示');
+  assert(document.getElementById('newFleetName').value === '', '成功后输入框应清空');
+}
+
+async function tB4() {
+  document.getElementById('newFleetName').value = '四队';
+  addFleet();
+  cancelPwdUI();
+  assertEqual(insertCalls.length, 0, '密码取消不应插入');
+  assertEqual(loadFleetsCalls, 0, '不应刷新车队列表');
+}
+
+async function tB5() {
+  document.getElementById('newFleetName').value = '四队';
+  addFleet();
+  enterPwd('000');           // 先输错（callback 保留）
+  cancelPwdUI();             // 再取消
+  assertEqual(insertCalls.length, 0, '错误后取消不应插入');
+}
+
+// ---- C组：deleteFleet 删除车队 ----
+async function tC1() {
+  orders = [
+    { 订单号: 'YD001', 车队: '一队' },
+    { 订单号: 'YD002', 车队: '一队' }
+  ];
+  deleteFleet('一队');
+  assert(alertCalls.some(m => m.includes('2 条订单')), '有订单时应 alert 阻止并显示订单数');
+  assertEqual(confirmMsgs.length, 0, '有订单时不应弹 confirm');
+  assert(!isPwdOpen(), '有订单时不应弹密码框');
+  assertEqual(deleteCalls.length, 0, '有订单时不应删除');
+}
+
+async function tC2() {
+  confirmReturn = false;     // confirm 点取消
+  deleteFleet('一队');
+  assertEqual(confirmMsgs.length, 1, '应弹出 confirm 确认');
+  assert(!isPwdOpen(), 'confirm 取消不应弹密码框');
+  assertEqual(deleteCalls.length, 0, 'confirm 取消不应删除');
+}
+
+async function tC3() {
+  deleteFleet('一队');
+  assert(isPwdOpen(), 'confirm 确定后应弹密码框');
+  enterPwd('888');
+  assertEqual(deleteCalls, [{ col: '名称', val: '一队' }], '正确密码后应按名称删除');
+  assertEqual(loadFleetsCalls, 1, '应刷新车队列表');
+  assert(successMsgs.some(m => m.includes('一队') && m.includes('已删除')), '应显示成功提示');
+}
+
+async function tC4() {
+  deleteFleet('一队');
+  cancelPwdUI();
+  assertEqual(deleteCalls.length, 0, '密码取消不应删除');
+  assertEqual(loadFleetsCalls, 0, '不应刷新车队列表');
+}
+
+// ================= 运行 =================
+(async function runAll() {
+  const tests = [
+    ['A1 正确密码888 → 回调true并关闭弹窗', tA1],
+    ['A2 错误密码 → 不回调，显示错误，弹窗保持', tA2],
+    ['A3 错误后重新输入正确 → 回调true（错误恢复）', tA3],
+    ['A4 取消 → 回调false并清理callback', tA4],
+    ['A5 打开弹窗清空残留输入/错误提示', tA5],
+    ['B1 添加-空名称 → alert拦截，不弹密码', tB1],
+    ['B2 添加-重名 → alert拦截，不弹密码', tB2],
+    ['B3 添加-有效名称+密码正确 → 插入+刷新+提示', tB3],
+    ['B4 添加-密码取消 → 不插入', tB4],
+    ['B5 添加-密码输错后取消 → 不插入', tB5],
+    ['C1 删除-车队有订单 → alert阻止，不进密码流程', tC1],
+    ['C2 删除-confirm取消 → 不弹密码，不删除', tC2],
+    ['C3 删除-密码正确 → 按名称删除+刷新+提示', tC3],
+    ['C4 删除-密码取消 → 不删除', tC4]
+  ];
+  for (const [name, fn] of tests) {
+    reset();
+    try { await fn(); pass(name); }
+    catch (e) { fail(name, e.message); }
+  }
+  const summary = document.getElementById('summary');
+  summary.textContent = `共 ${tests.length} 项：通过 ${passed}，失败 ${failed}`;
+  summary.style.color = failed === 0 ? '#389e0d' : '#cf1322';
+  console.log(`车队密码流程测试：${passed}/${tests.length} 通过`);
+})();
+</script>
+
+</body>
+</html>
