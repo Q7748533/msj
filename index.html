@@ -1802,11 +1802,35 @@ function ctxCopy() {
   const order = findOrderByNo(orderNo);
   if (!order) return;
   const text = COLUMNS.map(c => `${c}：${order[c] || ''}`).join('\n');
-  navigator.clipboard.writeText(text).then(() => {
+  copyToClipboard(text, function() {
     showSuccess('订单已复制到剪贴板');
-  }).catch(() => {
+  }, function() {
     alert('复制失败，请手动复制：\n' + text);
   });
+}
+
+// 复制文本到剪贴板：优先 Clipboard API（HTTPS/localhost 安全上下文），HTTP 下降级 execCommand('copy')
+function copyToClipboard(text, onOk, onFail) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(onOk).catch(function() { fallbackCopy(text, onOk, onFail); });
+  } else {
+    fallbackCopy(text, onOk, onFail);
+  }
+}
+
+function fallbackCopy(text, onOk, onFail) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(textarea);
+  if (ok) onOk(); else onFail();
 }
 
 // 分配车队：菜单切换为车队子列表
