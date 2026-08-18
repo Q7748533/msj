@@ -15,7 +15,7 @@ const vm = require('vm');
 // ============ 1. 定位源文件（优先正式页面；车队功能未合并时回退测试页面） ============
 const CANDIDATES = ['index.html', 'index_test.html'];
 const FN_NAMES = ['verifyPassword', 'confirmPwd', 'cancelPwd', 'addFleet', 'deleteFleet', 'esc', 'escJs',
-  'isFleet', 'canEditField', 'checkLogin', 'doLogin', 'enterApp', 'applyRoleView',
+  'isFleet', 'canEditField', 'checkLogin', 'resolveFleetByPwd', 'doLogin', 'enterApp', 'applyRoleView',
   'openBatchFleet', 'closeBatchFleet', 'doBatchAssign'];
 
 function pickSource() {
@@ -49,6 +49,7 @@ const HTML = pickSource();
 // 前置声明被提取函数引用到的全局变量（源文件中为 let 声明，沙箱中用 var 等价初始化为初值）
 const PRELUDE = `var pwdCallback = null, userRole = null, userFleet = '', loginRole = null, fleetFilter = 'all', currentPage = 1;
 var fleetPws = {};
+var fleets = ['一队', '二队', '三队'];
 var EDITABLE_FIELDS = ['车号', '司机', '司机电话'];`;
 const EXTRACTED_CODE = [PRELUDE, ...FN_NAMES.map(n => extractFunction(HTML, n))].join('\n');
 
@@ -219,6 +220,15 @@ const TESTS = [
     cancelPwdUI(c);
     assertEqual(c.state.inserts.length, 0, '错误后取消不应插入');
   }],
+  ['B6 添加-密码与其他车队重复 → alert拦截，不弹密码', c => {
+    c.fn.fleetPws = { '一队': '111' };
+    c.el('newFleetName').value = '四队';
+    c.el('newFleetPwd').value = '111';
+    c.fn.addFleet();
+    assert(c.state.alerts.some(m => m.includes('已被其他车队使用')), '密码重复应 alert 提示');
+    assert(!isPwdOpen(c), '密码重复不应弹密码框');
+    assertEqual(c.state.inserts.length, 0, '密码重复不应插入');
+  }],
 
   // ---- C组：deleteFleet 删除车队 ----
   ['C1 删除-车队有订单 → alert阻止，不进密码流程', c => {
@@ -290,30 +300,33 @@ const TESTS = [
 
   // ---- F组：身份入口（阶段2 车队登录 + 权限隔离） ----
   ['F1 checkLogin 调度密码888 → 通过', c => {
-    assertEqual(c.fn.checkLogin('admin', '', '888'), true, '调度密码 888 应通过');
+    assertEqual(c.fn.checkLogin('admin', '888'), true, '调度密码 888 应通过');
   }],
-  ['F2 checkLogin 调度密码错误 → 拒绝', c => {
-    assertEqual(c.fn.checkLogin('admin', '', '000'), false, '调度密码错误应拒绝');
-    assertEqual(c.fn.checkLogin('admin', '', ''), false, '调度密码为空应拒绝');
+  ['F2 checkLogin 调度密码错误/空 → 拒绝', c => {
+    assertEqual(c.fn.checkLogin('admin', '000'), false, '调度密码错误应拒绝');
+    assertEqual(c.fn.checkLogin('admin', ''), false, '调度密码为空应拒绝');
   }],
-  ['F3 checkLogin 车队选队+密码正确 → 通过', c => {
+  ['F3 checkLogin 车队密码正确 → 通过（密码唯一反查车队）', c => {
     c.fn.fleetPws = { '一队': '111', '二队': '222', '三队': '' };
-    assertEqual(c.fn.checkLogin('fleet', '一队', '111'), true, '一队密码 111 应通过');
+    assertEqual(c.fn.checkLogin('fleet', '111'), true, '密码 111 应对应一队并通过');
+    assertEqual(c.fn.checkLogin('fleet', '222'), true, '密码 222 应对应二队并通过');
   }],
-  ['F4 checkLogin 车队密码串队（一队输二队密码）→ 拒绝', c => {
-    c.fn.fleetPws = { '一队': '111', '二队': '222' };
-    assertEqual(c.fn.checkLogin('fleet', '一队', '222'), false, '一队输二队密码应拒绝');
-  }],
-  ['F5 checkLogin 未设密码车队/空密码/未知角色 → 拒绝', c => {
+  ['F4 checkLogin 车队密码不匹配/空/未知角色 → 拒绝', c => {
     c.fn.fleetPws = { '一队': '111', '三队': '' };
-    assertEqual(c.fn.checkLogin('fleet', '三队', ''), false, '未设密码的车队应拒绝登录');
-    assertEqual(c.fn.checkLogin('fleet', '一队', ''), false, '空密码应拒绝');
-    assertEqual(c.fn.checkLogin('guest', '一队', '111'), false, '未知角色应拒绝');
+    assertEqual(c.fn.checkLogin('fleet', '999'), false, '密码不匹配任何车队应拒绝');
+    assertEqual(c.fn.checkLogin('fleet', ''), false, '空密码应拒绝');
+    assertEqual(c.fn.checkLogin('guest', '111'), false, '未知角色应拒绝');
   }],
-  ['F6 doLogin 车队登录成功 → 锁定本车队视图+解除数据模糊', c => {
+  ['F5 resolveFleetByPwd 密码反查车队名（唯一密码）', c => {
+    c.fn.fleetPws = { '一队': '111', '二队': '222', '三队': '333' };
+    assertEqual(c.fn.resolveFleetByPwd('111'), '一队', '111 应反查为一队');
+    assertEqual(c.fn.resolveFleetByPwd('333'), '三队', '333 应反查为三队');
+    assertEqual(c.fn.resolveFleetByPwd('999'), '', '未匹配密码应返回空字符串');
+    assertEqual(c.fn.resolveFleetByPwd(''), '', '空密码应返回空字符串');
+  }],
+  ['F6 doLogin 车队密码正确 → 锁定本车队视图+解除数据模糊', c => {
     c.fn.fleetPws = { '一队': '111' };
     c.fn.loginRole = 'fleet';
-    c.el('loginFleet').value = '一队';
     c.el('loginPwd').value = '111';
     c.el('body').classList.add('pre-login'); // 模拟未登录时的数据模糊状态
     c.fn.doLogin();
@@ -329,7 +342,6 @@ const TESTS = [
   ['F7 doLogin 车队密码错误 → 保持登录层，提示错误', c => {
     c.fn.fleetPws = { '一队': '111' };
     c.fn.loginRole = 'fleet';
-    c.el('loginFleet').value = '一队';
     c.el('loginPwd').value = '000';
     c.fn.doLogin();
     assertEqual(c.fn.userRole, null, '密码错误不应进入');

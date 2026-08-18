@@ -704,9 +704,6 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
       </div>
     </div>
     <div id="loginForm" style="display:none;">
-      <div id="fleetPickRow" style="display:none;margin-bottom:10px;">
-        <select id="loginFleet" class="fleet-select" style="width:100%;"></select>
-      </div>
       <input type="password" id="loginPwd" placeholder="请输入密码" style="width:100%;padding:9px 12px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" onkeydown="if(event.key==='Enter')doLogin()">
       <div class="pwd-error" id="loginError">密码错误，请重试</div>
       <div class="modal-actions" style="margin-top:14px;">
@@ -1215,18 +1212,6 @@ function refreshFleetUI() {
     importSel.appendChild(opt);
   });
   importSel.value = fleets.includes(curImp) ? curImp : '';
-  // 登录层车队下拉框（保留当前选择）
-  const loginSel = document.getElementById('loginFleet');
-  if (loginSel) {
-    const curL = loginSel.value;
-    loginSel.innerHTML = '';
-    fleets.forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f; opt.textContent = f;
-      loginSel.appendChild(opt);
-    });
-    if (curL && fleets.includes(curL)) loginSel.value = curL;
-  }
   // 管理列表（弹窗打开时刷新）
   renderFleetList();
 }
@@ -1268,6 +1253,7 @@ function addFleet() {
   const pwd = pwdInput.value.trim();
   if (!name) { alert('请输入车队名称'); return; }
   if (fleets.includes(name)) { alert('车队「' + name + '」已存在'); return; }
+  if (pwd && Object.values(fleetPws).includes(pwd)) { alert('该密码已被其他车队使用，请更换'); return; }
   verifyPassword(function(ok) {
     if (!ok) return;
     getSupabase().from('fleets').insert({ 名称: name, 密码: pwd }).then(({ error }) => {
@@ -1311,33 +1297,32 @@ function canEditField(field) {
   return EDITABLE_FIELDS.includes(field);
 }
 
-// 登录校验（纯函数）：调度密码888；车队需 选队+密码 与 fleets 表密码一致，未设密码的车队拒绝登录
-function checkLogin(role, fleet, pwd) {
+// 登录校验（纯函数）：调度密码888；车队按密码反查唯一车队（密码唯一由添加时校验保证）
+function checkLogin(role, pwd) {
   if (role === 'admin') return pwd === '888';
-  if (role === 'fleet') return !!fleet && !!pwd && !!fleetPws[fleet] && pwd === fleetPws[fleet];
+  if (role === 'fleet') return !!resolveFleetByPwd(pwd);
   return false;
 }
 
-// 登录层：选择角色后展示对应表单（车队需先选车队）
+// 密码 → 车队名（密码唯一时结果唯一；空密码/未匹配返回空字符串）
+function resolveFleetByPwd(pwd) {
+  if (!pwd) return '';
+  for (const f of fleets) {
+    if (fleetPws[f] === pwd) return f;
+  }
+  return '';
+}
+
+// 登录层：选择角色后展示对应表单（调度输888；车队只输密码，系统自动识别车队）
 function pickRole(role) {
   loginRole = role;
   document.getElementById('rolePick').style.display = 'none';
   document.getElementById('loginForm').style.display = '';
-  document.getElementById('fleetPickRow').style.display = role === 'fleet' ? '' : 'none';
   document.getElementById('loginTitle').textContent = role === 'admin' ? '调度登录' : '车队登录';
   document.getElementById('loginError').style.display = 'none';
-  if (role === 'fleet') {
-    const sel = document.getElementById('loginFleet');
-    const cur = sel.value;
-    sel.innerHTML = '';
-    fleets.forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f; opt.textContent = f;
-      sel.appendChild(opt);
-    });
-    if (cur && fleets.includes(cur)) sel.value = cur;
-  }
-  setTimeout(() => document.getElementById('loginPwd').focus(), 50);
+  const pwdEl = document.getElementById('loginPwd');
+  pwdEl.placeholder = role === 'admin' ? '请输入调度密码' : '请输入本车队登录密码';
+  setTimeout(() => pwdEl.focus(), 50);
 }
 
 function backRolePick() {
@@ -1349,11 +1334,10 @@ function backRolePick() {
 
 function doLogin() {
   const pwdEl = document.getElementById('loginPwd');
-  const fleet = loginRole === 'fleet' ? document.getElementById('loginFleet').value : '';
-  if (loginRole === 'fleet' && !fleet) { alert('请选择车队'); return; }
-  if (checkLogin(loginRole, fleet, pwdEl.value)) {
+  const pwd = pwdEl.value;
+  if (checkLogin(loginRole, pwd)) {
     userRole = loginRole;
-    userFleet = fleet;
+    userFleet = loginRole === 'fleet' ? resolveFleetByPwd(pwd) : '';
     pwdEl.value = '';
     document.getElementById('loginError').style.display = 'none';
     enterApp();
