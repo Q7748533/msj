@@ -499,9 +499,9 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
   .sidebar {
     width: auto; min-width: auto;
     margin: 8px 8px 0;
-    max-height: 190px; /* 含车队下拉框，适当加高保证粘贴框可用 */
+    max-height: 320px; /* 容纳 车队下拉框+导入/清空+上传Excel+提示，避免按钮被遮挡 */
   }
-  .sidebar-body textarea { font-size: 14px; }
+  .sidebar-body textarea { font-size: 14px; min-height: 80px; }
   .content { margin: 6px 8px 8px; }
   .content-header {
     padding: 8px 10px;
@@ -548,7 +548,6 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
   .summary-card { min-width: 44px; padding: 4px 6px; border-radius: 6px; }
   .summary-card .num { font-size: 14px; }
   .summary-card .label { font-size: 9px; }
-  .sidebar { max-height: 140px; }
   .sidebar-header { font-size: 12px; padding: 8px 10px; }
   .sidebar-body { padding: 6px; gap: 6px; }
   .btn { padding: 5px 10px; font-size: 12px; }
