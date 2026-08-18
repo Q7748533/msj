@@ -188,6 +188,17 @@ body {
 }
 .filter-btn:hover { border-color: #1677ff; color: #1677ff; }
 .filter-btn.active { background: #1677ff; color: #fff; border-color: #1677ff; }
+.fleet-select {
+  padding: 5px 8px;
+  border-radius: 14px;
+  font-size: 12px;
+  border: 1px solid #e8e8e8;
+  background: #fafafa;
+  color: #666;
+  outline: none;
+  cursor: pointer;
+}
+.fleet-select:focus { border-color: #1677ff; }
 
 /* 分页 */
 .pagination {
@@ -249,10 +260,8 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 }
 
 .table-wrap { 
-  overflow-x: auto;
-  scrollbar-width: none; /* Firefox: 隐藏滚动条 */
+  overflow: visible; /* 不创建滚动容器，让 th 的 sticky 相对 .content-body 生效；横向滚动由 #hscroll 控制 contentBody.scrollLeft */
 }
-.table-wrap::-webkit-scrollbar { display: none; /* Chrome/Safari: 隐藏滚动条 */ }
 
 /* 浮动水平滚动条 - 固定在视口底部，始终可见 */
 .hscroll {
@@ -354,6 +363,8 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
   justify-content: center;
 }
 .modal-overlay.show { display: flex; }
+/* 密码弹窗层级更高：车队管理等弹窗内触发密码验证时不被遮挡 */
+#pwdOverlay { z-index: 150; }
 .modal {
   background: #fff;
   border-radius: 8px;
@@ -390,6 +401,36 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 .pwd-modal input:focus { border-color: #1677ff; box-shadow: 0 0 0 2px rgba(22,119,255,.15); }
 .pwd-modal .modal-actions { margin-top: 16px; }
 .pwd-error { color: #ff4d4f; font-size: 12px; margin-top: 6px; display: none; }
+
+/* 阶段2：身份入口 */
+.role-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.role-card:hover { border-color: #1677ff; background: #f0f7ff; }
+.role-icon { font-size: 24px; }
+.role-card small { color: #999; }
+.user-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: #e6f7ff;
+  color: #1677ff;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.user-badge:hover { background: #bae0ff; }
+/* 车队视图：隐藏调度专属功能 */
+body.fleet-view .admin-only { display: none !important; }
+/* 未登录：主体数据模糊+禁交互，防止登录层背后看到订单 */
+body.pre-login .main,
+body.pre-login .summary { filter: blur(8px); pointer-events: none; user-select: none; }
 
 /* Toast 提示 */
 .toast {
@@ -436,6 +477,7 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 }
 .ctx-item:hover { background: #f5f5f5; color: #ff4d4f; }
 .ctx-item.ctx-copy:hover { color: #1677ff; }
+.ctx-item.ctx-current { color: #1677ff; font-weight: 600; }
 
 /* 复选框 */
 td input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical-align: middle; }
@@ -444,9 +486,12 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 @media (max-width: 900px) {
   body { height: auto; min-height: 100vh; }
 
-  /* 移动端禁用订单行长按 callout 和文本选择（input 除外） */
+  /* 移动端禁用订单行长按 callout 和文本选择（input 除外），配合长按弹菜单 */
   tr[data-no] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   tr[data-no] input { -webkit-user-select: text; user-select: text; }
+
+  /* 车队下拉框紧凑化（侧栏空间有限） */
+  .fleet-select { padding: 4px 8px; font-size: 11px; }
 
   /* 顶栏 - 卡片缩小 */
   .header { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
@@ -461,7 +506,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
   .sidebar {
     width: auto; min-width: auto;
     margin: 8px 8px 0;
-    max-height: 160px;
+    max-height: 190px; /* 含车队下拉框，适当加高保证粘贴框可用 */
   }
   .sidebar-body textarea { font-size: 14px; }
   .content { margin: 6px 8px 8px; }
@@ -520,10 +565,12 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 }
 </style>
 </head>
-<body>
+<body class="pre-login">
 
 <div class="header">
   <h1>派单系统</h1>
+  <span id="userBadge" class="user-badge" style="display:none;" title="点击退出登录" onclick="logoutUser()"></span>
+  <button class="btn btn-default btn-sm admin-only" onclick="openFleetManager()" style="white-space:nowrap;">车队管理</button>
   <div class="summary" id="summaryBar">
     <div class="summary-card total" onclick="setFilterFromCard('all')"><span class="num" id="totalCount">0</span><span class="label">总计</span></div>
     <div class="summary-card pending" onclick="setFilterFromCard('未派')"><span class="num" id="pendingCount">0</span><span class="label">待派</span></div>
@@ -533,11 +580,14 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 </div>
 
 <div class="main">
-  <!-- 左侧：粘贴入口 -->
-  <div class="sidebar">
+  <!-- 左侧：粘贴入口（车队视图隐藏） -->
+  <div class="sidebar admin-only">
     <div class="sidebar-header">粘贴订单数据</div>
     <div class="sidebar-body">
       <textarea id="inputArea" placeholder="从订单系统复制数据粘贴到此处&#10;多条订单请用空行分隔&#10;&#10;支持键值对格式和表格格式"></textarea>
+      <select class="fleet-select" id="importFleet" style="width:100%;">
+        <option value="">不分配（导入后右键手动分配）</option>
+      </select>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="importOrders()">导入订单</button>
         <button class="btn btn-danger" onclick="clearInput()">清空</button>
@@ -559,12 +609,17 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
         <button class="btn btn-sm filter-btn" onclick="setFilter('未派', this)">未派</button>
         <button class="btn btn-sm filter-btn" onclick="setFilter('已派', this)">已派</button>
         <button class="btn btn-sm filter-btn" onclick="setFilter('订单取消', this)">订单取消</button>
+        <select class="fleet-select" id="fleetFilter" onchange="setFleetFilter(this.value)">
+          <option value="all">全部车队</option>
+          <option value="__none__">未分配</option>
+        </select>
       </div>
       <input type="text" class="search-input" id="searchInput" placeholder="搜索订单号/司机/车号..." oninput="doSearch()">
       <div class="actions">
         <button class="btn btn-default btn-sm" onclick="exportCSV()">导出CSV</button>
-        <button class="btn btn-danger btn-sm" onclick="batchDelete()">批量删除</button>
-        <button class="btn btn-danger btn-sm" onclick="clearOrders()">清空列表</button>
+        <button class="btn btn-default btn-sm admin-only" onclick="openBatchFleet()">批量分配</button>
+        <button class="btn btn-danger btn-sm admin-only" onclick="batchDelete()">批量删除</button>
+        <button class="btn btn-danger btn-sm admin-only" onclick="clearOrders()">清空列表</button>
       </div>
     </div>
     <div class="content-body" id="tableArea">
@@ -605,7 +660,62 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
 <!-- 右键菜单 -->
 <div class="ctx-menu" id="ctxMenu" style="display:none">
   <div class="ctx-item ctx-copy" onclick="ctxCopy()">复制订单</div>
-  <div class="ctx-item" onclick="ctxDelete()">删除订单</div>
+  <div class="ctx-item ctx-copy admin-only" onclick="ctxAssignFleet()">分配车队</div>
+  <div class="ctx-item admin-only" onclick="ctxDelete()">删除订单</div>
+</div>
+
+<!-- 车队管理弹窗 -->
+<div class="modal-overlay" id="fleetOverlay">
+  <div class="modal">
+    <h3>车队管理</h3>
+    <div id="fleetList" style="margin-bottom:16px;max-height:260px;overflow-y:auto;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
+      <input type="text" id="newFleetName" placeholder="输入新车队名称" style="flex:1;padding:8px 12px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;outline:none;" onkeydown="if(event.key==='Enter')addFleet()">
+      <button class="btn btn-primary" style="flex:none;" onclick="addFleet()">添加</button>
+    </div>
+    <input type="text" id="newFleetPwd" placeholder="车队登录密码（该车队从「车队入口」登录时使用）" style="width:100%;padding:8px 12px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;outline:none;margin-bottom:8px;">
+    <div style="font-size:11px;color:#999;line-height:1.5;">添加/删除车队需输入密码；车队下有订单时无法删除；车队密码用于「车队入口」登录（添加时设置）</div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="closeFleetModal()">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量分配车队弹窗 -->
+<div class="modal-overlay" id="batchFleetOverlay">
+  <div class="modal">
+    <h3>批量分配车队</h3>
+    <div style="color:#999;font-size:12px;margin-bottom:10px;" id="batchFleetInfo"></div>
+    <div class="modal-options" id="batchFleetOptions"></div>
+    <div class="modal-actions">
+      <button class="btn btn-default" onclick="closeBatchFleet()">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 身份入口（阶段2：调度/车队） -->
+<div class="modal-overlay show" id="loginOverlay">
+  <div class="modal" style="max-width:340px;">
+    <h3 id="loginTitle">选择身份进入</h3>
+    <div id="rolePick" style="display:flex;flex-direction:column;gap:10px;margin:14px 0;">
+      <div class="role-card" onclick="pickRole('admin')">
+        <span class="role-icon">🚗</span>
+        <span><strong>调度（管理员）</strong><br><small>管理全部订单与车队</small></span>
+      </div>
+      <div class="role-card" onclick="pickRole('fleet')">
+        <span class="role-icon">🚙</span>
+        <span><strong>车队</strong><br><small>仅查看/填写本车队订单</small></span>
+      </div>
+    </div>
+    <div id="loginForm" style="display:none;">
+      <input type="password" id="loginPwd" placeholder="请输入密码" style="width:100%;padding:9px 12px;border:1px solid #d9d9d9;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box;" onkeydown="if(event.key==='Enter')doLogin()">
+      <div class="pwd-error" id="loginError">密码错误，请重试</div>
+      <div class="modal-actions" style="margin-top:14px;">
+        <button class="btn btn-default" onclick="backRolePick()">返回</button>
+        <button class="btn btn-primary" onclick="doLogin()">进入</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast" onclick="hideToast()"></div>
@@ -617,6 +727,7 @@ function getSupabase() { return window.supabaseClient; }
 // ============ 数据存储 ============
 let orders = [];
 let filterStatus = 'all';
+let fleetFilter = 'all'; // 车队筛选（'all'/车队名/'__none__'未分配）
 let searchTerm = '';
 let currentPage = 1;
 let isEditing = false; // 防止实时同步打断编辑
@@ -688,12 +799,20 @@ function setupRealtime() {
       }
     )
     .subscribe();
+  // 车队表实时同步：其他用户增删车队时自动刷新下拉框/右键子菜单（正式库需 ADD TABLE fleets 到 publication）
+  supabase
+    .channel('fleets-channel')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'fleets' },
+      () => { loadFleets(); }
+    )
+    .subscribe();
 }
 
 // 订单默认字段
 function defaultOrder() {
   return {
-    订单号: '', 派单情况: '未派', 是否结算: '否',
+    订单号: '', 车队: '', 派单情况: '未派', 是否结算: '否',
     预订车型: '', 服务类型: '', 服务城市: '',
     服务日期: '', 航班号: '', 上车点: '', 下车点: '',
     车号: '', 司机: '', 司机电话: '',
@@ -704,6 +823,7 @@ function defaultOrder() {
 // 字段映射：原始键 → 显示字段
 const FIELD_MAP = {
   '订单编号': '订单号', '订单号': '订单号',
+  '车队': '车队',
   '服务类型': '服务类型',
   '用车时间': '服务日期', '服务日期': '服务日期',
   '航班号': '航班号', '航班号/车次': '航班号', '航班编号': '航班号',
@@ -717,7 +837,7 @@ const FIELD_MAP = {
 };
 
 // 显示列（按顺序）
-const COLUMNS = ['订单号', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
+const COLUMNS = ['订单号', '车队', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
 
 // ============ 解析逻辑 ============
 function mapOrder(raw) {
@@ -732,6 +852,8 @@ function mapOrder(raw) {
   if (!order['服务城市']) {
     order['服务城市'] = '成都';
   }
+
+  // 车队不做自动分配：车队与车型无关，由管理员导入时选择或右键手动分配
 
   // 清洗地址：去掉坐标 (纬度：... 经度：...)
   function cleanAddress(addr) {
@@ -810,6 +932,7 @@ function parseTabular(text) {
 
 // ============ 导入 ============
 function importOrders() {
+  if (isFleet()) return; // 车队视图无导入权限
   verifyPassword(function(ok) {
     if (!ok) return;
     doImportOrders();
@@ -824,12 +947,14 @@ function doImportOrders() {
   const rawList = isKeyValueFormat(input) ? parseKeyValue(input) : parseTabular(input);
   if (rawList.length === 0) return;
 
-  // 去重：按订单号跳过已存在的
+  // 去重：按订单号跳过已存在的；车队按导入下拉框选择（''=不分配 / 车队名=指定）
+  const importFleet = document.getElementById('importFleet').value;
   const existingNos = new Set(orders.map(o => o['订单号']));
   const newOrders = [];
   let dupCount = 0;
   for (const raw of rawList) {
     const order = mapOrder(raw);
+    order['车队'] = importFleet; // 原始数据无车队概念，统一按导入选择
     if (!order['订单号']) continue;
     if (existingNos.has(order['订单号'])) { dupCount++; continue; }
     newOrders.push(order);
@@ -856,6 +981,7 @@ function clearInput() {
 
 // ============ Excel导入 ============
 function importExcel(fileInput) {
+  if (isFleet()) { fileInput.value = ''; return; } // 车队视图无导入权限
   verifyPassword(function(ok) {
     if (!ok) { fileInput.value = ''; return; }
     doImportExcel(fileInput);
@@ -875,6 +1001,8 @@ function doImportExcel(fileInput) {
     if (rows.length < 2) { fileInput.value = ''; return; }
 
     const headers = rows[0].map(h => String(h || '').trim());
+    // 车队按导入下拉框选择（''=不分配 / 车队名=指定）
+    const importFleet = document.getElementById('importFleet').value;
     const existingNos = new Set(orders.map(o => o['订单号']));
     const newOrders = [];
     let dupCount = 0;
@@ -883,6 +1011,7 @@ function doImportExcel(fileInput) {
       const raw = {};
       headers.forEach((h, j) => { raw[h] = rows[i][j] != null ? String(rows[i][j]).trim() : ''; });
       const order = mapOrder(raw);
+      order['车队'] = importFleet; // 原始数据无车队概念，统一按导入选择
       if (!order['订单号']) continue;
       if (existingNos.has(order['订单号'])) { dupCount++; continue; }
       newOrders.push(order);
@@ -907,11 +1036,15 @@ function doImportExcel(fileInput) {
 }
 
 // ============ 筛选 ============
-const SEARCH_FIELDS = ['订单号', '司机', '车号', '司机电话', '上车点', '下车点', '服务类型'];
+const SEARCH_FIELDS = ['订单号', '车队', '司机', '车号', '司机电话', '上车点', '下车点', '服务类型'];
 
 // 统一筛选+搜索逻辑（renderTable / goPage / getNextEditableCell / exportCSV 共用）
 function getFilteredOrders() {
   let filtered = filterStatus === 'all' ? orders : orders.filter(o => o['派单情况'] === filterStatus);
+  // 车队筛选（'__none__' = 未分配）
+  if (fleetFilter !== 'all') {
+    filtered = filtered.filter(o => fleetFilter === '__none__' ? !o['车队'] : o['车队'] === fleetFilter);
+  }
   if (searchTerm) {
     const kw = searchTerm.toLowerCase();
     filtered = filtered.filter(o => SEARCH_FIELDS.some(f => o[f] && o[f].toLowerCase().includes(kw)));
@@ -925,6 +1058,244 @@ function setFilter(status, btn) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderTable();
+}
+
+// 车队筛选切换（车队视图锁定本车队，禁止切换）
+function setFleetFilter(val) {
+  if (isFleet()) return;
+  fleetFilter = val;
+  currentPage = 1;
+  renderTable();
+}
+
+// ============ 车队管理 ============
+let fleets = []; // 车队列表（从数据库加载，管理界面可增删）
+
+// 从 Supabase(fleets 表) 加载车队列表（含车队登录密码）
+async function loadFleets() {
+  const supabase = getSupabase();
+  if (!supabase) { setTimeout(loadFleets, 300); return; }
+  const { data, error } = await supabase.from('fleets').select('*').order('id', { ascending: true });
+  if (error) { console.error('车队加载失败:', error); return; }
+  fleets = (data || []).map(r => r['名称']).filter(Boolean);
+  fleetPws = {};
+  (data || []).forEach(r => { if (r['名称']) fleetPws[r['名称']] = r['密码'] || ''; });
+  refreshFleetUI();
+  // 车队视图失效保护：登录中的车队被删后强制重新登录
+  if (isFleet() && userFleet && !fleets.includes(userFleet)) {
+    alert(`车队「${userFleet}」已不存在，请重新登录`);
+    sessionStorage.removeItem('msj_session');
+    location.reload();
+  }
+}
+
+// 车队列表变化后刷新所有相关 UI（筛选下拉框/导入下拉框/管理列表）
+function refreshFleetUI() {
+  // 筛选下拉框（保留当前选择，失效则回退全部）
+  const sel = document.getElementById('fleetFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="all">全部车队</option><option value="__none__">未分配</option>';
+  fleets.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f; opt.textContent = f;
+    sel.appendChild(opt);
+  });
+  sel.value = isFleet() ? userFleet : ((cur === 'all' || cur === '__none__' || fleets.includes(cur)) ? cur : 'all');
+  // 导入下拉框（保留当前选择，失效则回退不分配）
+  const importSel = document.getElementById('importFleet');
+  const curImp = importSel.value;
+  importSel.innerHTML = '<option value="">不分配（导入后右键手动分配）</option>';
+  fleets.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f; opt.textContent = f;
+    importSel.appendChild(opt);
+  });
+  importSel.value = fleets.includes(curImp) ? curImp : '';
+  // 管理列表（弹窗打开时刷新）
+  renderFleetList();
+}
+
+function openFleetManager() {
+  if (isFleet()) return; // 车队视图无车队管理权限
+  renderFleetList();
+  document.getElementById('fleetOverlay').classList.add('show');
+}
+
+function closeFleetModal() {
+  document.getElementById('fleetOverlay').classList.remove('show');
+}
+
+// 渲染管理列表：车队名 + 订单数 + 登录密码 + 删除按钮
+function renderFleetList() {
+  const list = document.getElementById('fleetList');
+  if (!list) return;
+  if (fleets.length === 0) {
+    list.innerHTML = '<div style="color:#999;font-size:13px;text-align:center;padding:12px;">暂无车队，请在下方添加</div>';
+    return;
+  }
+  list.innerHTML = fleets.map(f => {
+    const count = orders.filter(o => o['车队'] === f).length;
+    const pwTip = fleetPws[f] ? '密码 ' + esc(fleetPws[f]) : '<span style="color:#d46b08;">未设密码（无法车队登录）</span>';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border:1px solid #f0f0f0;border-radius:6px;margin-bottom:6px;">
+      <span style="font-size:13px;font-weight:500;">${esc(f)}<span style="color:#999;font-weight:400;font-size:12px;margin-left:6px;">${count} 条订单 · ${pwTip}</span></span>
+      <button class="btn btn-danger btn-sm" onclick="deleteFleet('${escJs(f)}')">删除</button>
+    </div>`;
+  }).join('');
+}
+
+// 添加车队（需密码；可同时设置车队登录密码）
+function addFleet() {
+  if (isFleet()) return; // 车队视图无添加权限
+  const input = document.getElementById('newFleetName');
+  const pwdInput = document.getElementById('newFleetPwd');
+  const name = input.value.trim();
+  const pwd = pwdInput.value.trim();
+  if (!name) { alert('请输入车队名称'); return; }
+  if (fleets.includes(name)) { alert('车队「' + name + '」已存在'); return; }
+  if (pwd && Object.values(fleetPws).includes(pwd)) { alert('该密码已被其他车队使用，请更换'); return; }
+  verifyPassword(function(ok) {
+    if (!ok) return;
+    getSupabase().from('fleets').insert({ 名称: name, 密码: pwd }).then(({ error }) => {
+      if (error) { alert('添加失败: ' + error.message); return; }
+      input.value = '';
+      pwdInput.value = '';
+      loadFleets();
+      showSuccess(`车队「${name}」已添加`);
+    });
+  });
+}
+
+// 删除车队（有订单时阻止；需密码）
+function deleteFleet(name) {
+  if (isFleet()) return; // 车队视图无删除权限
+  const count = orders.filter(o => o['车队'] === name).length;
+  if (count > 0) { alert(`车队「${name}」下还有 ${count} 条订单，请先重新分配或删除订单`); return; }
+  if (!confirm(`确定删除车队「${name}」？`)) return;
+  verifyPassword(function(ok) {
+    if (!ok) return;
+    getSupabase().from('fleets').delete().eq('名称', name).then(({ error }) => {
+      if (error) { alert('删除失败: ' + error.message); return; }
+      loadFleets();
+      showSuccess(`车队「${name}」已删除`);
+    });
+  });
+}
+
+// ============ 阶段2：身份入口（调度/车队）============
+// 方案A客户端过滤：车队密码进入后前端锁定只显示本车队订单（非数据库层隔离）
+let userRole = null;   // null=未登录 / 'admin'=调度 / 'fleet'=车队
+let userFleet = '';    // 车队视图时的车队名
+let loginRole = null;  // 登录层正在操作的角色选择
+let fleetPws = {};     // 车队名→登录密码（loadFleets 从 fleets 表加载）
+
+function isFleet() { return userRole === 'fleet'; }
+
+// 权限判断：车队视图只能编辑 车号/司机/司机电话（派单情况/是否结算仅调度可改）
+function canEditField(field) {
+  if (!isFleet()) return true;
+  return EDITABLE_FIELDS.includes(field);
+}
+
+// 登录校验（纯函数）：调度密码888；车队按密码反查唯一车队（密码唯一由添加时校验保证）
+function checkLogin(role, pwd) {
+  if (role === 'admin') return pwd === '888';
+  if (role === 'fleet') return !!resolveFleetByPwd(pwd);
+  return false;
+}
+
+// 密码 → 车队名（密码唯一时结果唯一；空密码/未匹配返回空字符串）
+function resolveFleetByPwd(pwd) {
+  if (!pwd) return '';
+  for (const f of fleets) {
+    if (fleetPws[f] === pwd) return f;
+  }
+  return '';
+}
+
+// 登录层：选择角色后展示对应表单（调度输888；车队只输密码，系统自动识别车队）
+function pickRole(role) {
+  loginRole = role;
+  document.getElementById('rolePick').style.display = 'none';
+  document.getElementById('loginForm').style.display = '';
+  document.getElementById('loginTitle').textContent = role === 'admin' ? '调度登录' : '车队登录';
+  document.getElementById('loginError').style.display = 'none';
+  const pwdEl = document.getElementById('loginPwd');
+  pwdEl.placeholder = role === 'admin' ? '请输入调度密码' : '请输入本车队登录密码';
+  setTimeout(() => pwdEl.focus(), 50);
+}
+
+function backRolePick() {
+  loginRole = null;
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('rolePick').style.display = '';
+  document.getElementById('loginTitle').textContent = '选择身份进入';
+}
+
+function doLogin() {
+  const pwdEl = document.getElementById('loginPwd');
+  const pwd = pwdEl.value;
+  if (checkLogin(loginRole, pwd)) {
+    userRole = loginRole;
+    userFleet = loginRole === 'fleet' ? resolveFleetByPwd(pwd) : '';
+    pwdEl.value = '';
+    document.getElementById('loginError').style.display = 'none';
+    enterApp();
+  } else {
+    document.getElementById('loginError').style.display = 'block';
+    pwdEl.value = '';
+    pwdEl.focus();
+  }
+}
+
+function enterApp() {
+  sessionStorage.setItem('msj_session', JSON.stringify({ role: userRole, fleet: userFleet }));
+  document.getElementById('loginOverlay').classList.remove('show');
+  applyRoleView();
+}
+
+// 按身份切换视图：车队视图锁定车队筛选+隐藏调度专属功能（CSS admin-only）
+function applyRoleView() {
+  document.body.classList.remove('pre-login'); // 登录成功解除数据模糊
+  const sel = document.getElementById('fleetFilter');
+  if (isFleet()) {
+    document.body.classList.add('fleet-view');
+    fleetFilter = userFleet;
+    sel.value = userFleet;
+    sel.disabled = true;
+    currentPage = 1;
+  } else {
+    document.body.classList.remove('fleet-view');
+    sel.disabled = false;
+  }
+  updateUserBadge();
+  renderTable();
+}
+
+function updateUserBadge() {
+  const badge = document.getElementById('userBadge');
+  if (!badge) return;
+  if (userRole === 'admin') { badge.textContent = '调度'; badge.style.display = ''; }
+  else if (userRole === 'fleet') { badge.textContent = userFleet + ' · 车队'; badge.style.display = ''; }
+  else badge.style.display = 'none';
+}
+
+function logoutUser() {
+  if (!confirm('确定退出当前身份？')) return;
+  sessionStorage.removeItem('msj_session');
+  location.reload();
+}
+
+// 刷新页面恢复上次登录身份（会话存 sessionStorage，关标签页即失效）
+function restoreSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('msj_session') || 'null');
+    if (saved && (saved.role === 'admin' || saved.role === 'fleet')) {
+      userRole = saved.role;
+      userFleet = saved.fleet || '';
+      document.getElementById('loginOverlay').classList.remove('show');
+      applyRoleView();
+    }
+  } catch (e) { /* 损坏的会话忽略，走登录层 */ }
 }
 
 function setFilterFromCard(status) {
@@ -983,7 +1354,10 @@ function renderTable() {
     html += `<td>${start + displayIdx + 1}</td>`;
     COLUMNS.forEach(col => {
       const val = o[col] || '';
-      if (col === '派单情况') {
+      if (col === '车队') {
+        // 车队列：空值显示灰色"未分配"提示（右键可分配）
+        html += `<td>${esc(val) || '<span style="color:#d46b08;">未分配</span>'}</td>`;
+      } else if (col === '派单情况') {
         const cls = val === '已派' ? 'tag-done' : val === '订单取消' ? 'tag-cancel' : 'tag-pending';
         html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
       } else if (col === '是否结算') {
@@ -1032,10 +1406,12 @@ function goPage(page) {
 }
 
 function updateSummary() {
-  document.getElementById('totalCount').textContent = orders.length;
-  document.getElementById('pendingCount').textContent = orders.filter(o => o['派单情况'] === '未派').length;
-  document.getElementById('doneCount').textContent = orders.filter(o => o['派单情况'] === '已派').length;
-  document.getElementById('cancelCount').textContent = orders.filter(o => o['派单情况'] === '订单取消').length;
+  // 车队视图只统计本车队订单（避免向车队泄露其他车队数据量）
+  const base = isFleet() ? orders.filter(o => o['车队'] === userFleet) : orders;
+  document.getElementById('totalCount').textContent = base.length;
+  document.getElementById('pendingCount').textContent = base.filter(o => o['派单情况'] === '未派').length;
+  document.getElementById('doneCount').textContent = base.filter(o => o['派单情况'] === '已派').length;
+  document.getElementById('cancelCount').textContent = base.filter(o => o['派单情况'] === '订单取消').length;
 }
 
 // ============ 编辑 ============
@@ -1105,6 +1481,7 @@ function jumpToTabTarget() {
 }
 
 function openModal(orderNo, field) {
+  if (!canEditField(field)) return; // 车队视图：派单情况/是否结算仅调度可改
   modalTarget = { orderNo, field };
   const overlay = document.getElementById('modalOverlay');
   const title = document.getElementById('modalTitle');
@@ -1157,6 +1534,7 @@ function closeModal() {
 }
 
 function editCell(orderNo, field, td) {
+  if (!canEditField(field)) return; // 车队视图：仅可编辑 车号/司机/司机电话
   const order = findOrderByNo(orderNo);
   if (!order) return;
   const current = order[field] || '';
@@ -1224,8 +1602,9 @@ function editCell(orderNo, field, td) {
 }
 
 function checkDriverReady() {
-  // 统计未派且司机信息齐全的订单数量
-  const readyCount = orders.filter(o =>
+  // 统计未派且司机信息齐全的订单数量（车队视图只统计本车队）
+  const base = isFleet() ? orders.filter(o => o['车队'] === userFleet) : orders;
+  const readyCount = base.filter(o =>
     o['派单情况'] === '未派' && o['车号'] && o['司机'] && o['司机电话']
   ).length;
   if (readyCount > 0) {
@@ -1297,6 +1676,7 @@ function cancelPwd() {
 // ============ 删除 / 清空 ============
 
 function deleteOrder(orderNo) {
+  if (isFleet()) return; // 车队视图无删除权限
   if (!confirm(`确定删除订单 ${orderNo}？`)) return;
   verifyPassword(function(ok) {
     if (!ok) return;
@@ -1317,6 +1697,7 @@ function getSelectedOrderNos() {
 }
 
 function batchDelete() {
+  if (isFleet()) return; // 车队视图无删除权限
   const nos = getSelectedOrderNos();
   if (nos.length === 0) { alert('请先勾选要删除的订单'); return; }
   if (!confirm(`确定删除选中的 ${nos.length} 条订单？`)) return;
@@ -1328,7 +1709,40 @@ function batchDelete() {
   });
 }
 
+// ============ 批量分配车队 ============
+// 打开弹窗：勾选订单 → 选目标车队 → 一键分配（仅调度）
+function openBatchFleet() {
+  if (isFleet()) return; // 车队视图无分配权限
+  const nos = getSelectedOrderNos();
+  if (nos.length === 0) { alert('请先勾选要分配的订单'); return; }
+  if (fleets.length === 0) { alert('暂无车队，请先在「车队管理」添加'); return; }
+  document.getElementById('batchFleetInfo').textContent = `已勾选 ${nos.length} 条订单，选择目标车队：`;
+  const opts = document.getElementById('batchFleetOptions');
+  opts.innerHTML = fleets.map(f =>
+    `<div class="opt" onclick="doBatchAssign('${escJs(f)}')">${esc(f)}</div>`
+  ).join('') + `<div class="opt" style="color:#ff4d4f;" onclick="doBatchAssign('')">✕ 取消分配</div>`;
+  document.getElementById('batchFleetOverlay').classList.add('show');
+}
+
+function closeBatchFleet() {
+  document.getElementById('batchFleetOverlay').classList.remove('show');
+}
+
+// 执行批量分配（车队传空字符串 = 取消分配）
+function doBatchAssign(fleet) {
+  if (isFleet()) { closeBatchFleet(); return; } // 车队视图无分配权限
+  const nos = getSelectedOrderNos();
+  closeBatchFleet();
+  if (nos.length === 0) return;
+  getSupabase().from('orders').update({ '车队': fleet }).in('订单号', nos).then(({ error }) => {
+    if (error) { alert('批量分配失败: ' + error.message); return; }
+    loadOrders();
+    showSuccess(fleet ? `${nos.length} 条订单已分配到 ${fleet}` : `${nos.length} 条订单已取消分配`);
+  });
+}
+
 function clearOrders() {
+  if (isFleet()) return; // 车队视图无清空权限
   if (!confirm('确定清空所有订单？此操作不可恢复。')) return;
   verifyPassword(async function(ok) {
     if (!ok) return;
@@ -1337,8 +1751,10 @@ function clearOrders() {
     // 清除搜索词和筛选状态，避免新导入订单被旧条件过滤
     searchTerm = '';
     filterStatus = 'all';
+    fleetFilter = 'all';
     currentPage = 1;
     document.getElementById('searchInput').value = '';
+    document.getElementById('fleetFilter').value = 'all';
     document.querySelectorAll('.filter-btn').forEach(b => {
       b.classList.toggle('active', b.textContent.trim() === '全部');
     });
@@ -1368,7 +1784,17 @@ function showCtxMenu(e, orderNo) {
   menu.style.top = Math.max(4, top) + 'px';
 }
 
-// 复制订单完整内容到剪贴板（键值对格式，与粘贴导入格式一致，可直接回贴导入）
+function ctxDelete() {
+  const orderNo = ctxOrderNo;
+  hideCtxMenu();
+  if (!orderNo) return;
+  deleteOrder(orderNo);
+}
+
+// ============ 右键：复制订单 + 分配车队 ============
+let ctxMenuHTML = ''; // 原始菜单内容缓存（子菜单返回用）
+
+// 复制订单完整内容到剪贴板（键值对格式，与粘贴导入格式一致）
 function ctxCopy() {
   const orderNo = ctxOrderNo;
   hideCtxMenu();
@@ -1383,11 +1809,39 @@ function ctxCopy() {
   });
 }
 
-function ctxDelete() {
+// 分配车队：菜单切换为车队子列表
+function ctxAssignFleet() {
+  if (isFleet()) { hideCtxMenu(); return; } // 车队视图无分配权限
+  const menu = document.getElementById('ctxMenu');
+  if (!ctxMenuHTML) ctxMenuHTML = menu.innerHTML;
+  const order = ctxOrderNo ? findOrderByNo(ctxOrderNo) : null;
+  const current = order ? (order['车队'] || '') : '';
+  let html = fleets.map(f =>
+    `<div class="ctx-item ctx-copy${f === current ? ' ctx-current' : ''}" onclick="doAssignFleet('${escJs(f)}')">${f === current ? '✓ ' : ''}${esc(f)}</div>`
+  ).join('');
+  if (html === '') html = '<div class="ctx-item" style="color:#999;cursor:default;">暂无车队，请先在「车队管理」添加</div>';
+  if (current) html += `<div class="ctx-item ctx-copy" onclick="doAssignFleet('')">✕ 取消分配</div>`;
+  html += '<div class="ctx-item" onclick="restoreCtxMenu()">← 返回</div>';
+  menu.innerHTML = html;
+}
+
+// 恢复右键菜单原始内容
+function restoreCtxMenu() {
+  const menu = document.getElementById('ctxMenu');
+  if (ctxMenuHTML) menu.innerHTML = ctxMenuHTML;
+}
+
+// 执行分配车队
+function doAssignFleet(fleet) {
+  if (isFleet()) { hideCtxMenu(); return; } // 车队视图无分配权限
   const orderNo = ctxOrderNo;
   hideCtxMenu();
   if (!orderNo) return;
-  deleteOrder(orderNo);
+  getSupabase().from('orders').update({ '车队': fleet }).eq('订单号', orderNo).then(({ error }) => {
+    if (error) { alert('分配失败: ' + error.message); return; }
+    loadOrders();
+    showSuccess(fleet ? `订单 ${orderNo} 已分配到 ${fleet}` : `订单 ${orderNo} 已取消分配`);
+  });
 }
 
 function hideCtxMenu() {
@@ -1437,31 +1891,36 @@ document.getElementById('modalOverlay').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
 
+// 点击空白关闭车队管理弹窗
+document.getElementById('fleetOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeFleetModal();
+});
+
 // ============ 浮动水平滚动条同步 ============
 function syncHScroll() {
   const hscroll = document.getElementById('hscroll');
   const hscrollInner = document.getElementById('hscrollInner');
-  const tableWrap = document.querySelector('.table-wrap');
+  const contentBody = document.getElementById('tableArea');
   if (!hscroll || !hscrollInner) return;
-  if (!tableWrap) { hscrollInner.style.width = '0px'; return; }
-  const table = tableWrap.querySelector('table');
+  if (!contentBody) { hscrollInner.style.width = '0px'; return; }
+  const table = contentBody.querySelector('table');
   if (!table) { hscrollInner.style.width = '0px'; return; }
   hscrollInner.style.width = table.offsetWidth + 'px';
-  hscroll.scrollLeft = tableWrap.scrollLeft;
+  hscroll.scrollLeft = contentBody.scrollLeft;
 }
 
 (function setupHScrollSync() {
   const hscroll = document.getElementById('hscroll');
   if (!hscroll) return;
+  const contentBody = document.getElementById('tableArea');
   // 浮动滚动条 → 同步表格水平滚动
   hscroll.addEventListener('scroll', () => {
-    const tableWrap = document.querySelector('.table-wrap');
-    if (tableWrap) tableWrap.scrollLeft = hscroll.scrollLeft;
+    if (contentBody) contentBody.scrollLeft = hscroll.scrollLeft;
   });
   // 表格水平滚动 → 同步浮动滚动条（触控板/Shift+滚轮场景）
   document.addEventListener('scroll', (e) => {
     const target = e.target;
-    if (target && target.classList && target.classList.contains('table-wrap')) {
+    if (target && target.id === 'tableArea') {
       hscroll.scrollLeft = target.scrollLeft;
     }
   }, true);
@@ -1503,9 +1962,15 @@ function syncHScroll() {
   }, { passive: true });
 })();
 
+// 初始化：加载车队列表（自动填充筛选/导入下拉框）
+loadFleets();
+
 // 初始化：加载数据 + 开启实时同步
 loadOrders();
 setupRealtime();
+
+// 阶段2：恢复上次登录身份（无会话则显示身份入口）
+restoreSession();
 </script>
 
 </body>

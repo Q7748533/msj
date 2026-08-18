@@ -253,10 +253,8 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 }
 
 .table-wrap { 
-  overflow-x: auto;
-  scrollbar-width: none; /* Firefox: 隐藏滚动条 */
+  overflow: visible; /* 不创建滚动容器，让 th 的 sticky 相对 .content-body 生效；横向滚动由 #hscroll 控制 contentBody.scrollLeft */
 }
-.table-wrap::-webkit-scrollbar { display: none; /* Chrome/Safari: 隐藏滚动条 */ }
 
 /* 浮动水平滚动条 - 固定在视口底部，始终可见 */
 .hscroll {
@@ -2001,27 +1999,27 @@ document.getElementById('fleetOverlay').addEventListener('click', function(e) {
 function syncHScroll() {
   const hscroll = document.getElementById('hscroll');
   const hscrollInner = document.getElementById('hscrollInner');
-  const tableWrap = document.querySelector('.table-wrap');
+  const contentBody = document.getElementById('tableArea');
   if (!hscroll || !hscrollInner) return;
-  if (!tableWrap) { hscrollInner.style.width = '0px'; return; }
-  const table = tableWrap.querySelector('table');
+  if (!contentBody) { hscrollInner.style.width = '0px'; return; }
+  const table = contentBody.querySelector('table');
   if (!table) { hscrollInner.style.width = '0px'; return; }
   hscrollInner.style.width = table.offsetWidth + 'px';
-  hscroll.scrollLeft = tableWrap.scrollLeft;
+  hscroll.scrollLeft = contentBody.scrollLeft;
 }
 
 (function setupHScrollSync() {
   const hscroll = document.getElementById('hscroll');
   if (!hscroll) return;
+  const contentBody = document.getElementById('tableArea');
   // 浮动滚动条 → 同步表格水平滚动
   hscroll.addEventListener('scroll', () => {
-    const tableWrap = document.querySelector('.table-wrap');
-    if (tableWrap) tableWrap.scrollLeft = hscroll.scrollLeft;
+    if (contentBody) contentBody.scrollLeft = hscroll.scrollLeft;
   });
   // 表格水平滚动 → 同步浮动滚动条（触控板/Shift+滚轮场景）
   document.addEventListener('scroll', (e) => {
     const target = e.target;
-    if (target && target.classList && target.classList.contains('table-wrap')) {
+    if (target && target.id === 'tableArea') {
       hscroll.scrollLeft = target.scrollLeft;
     }
   }, true);
