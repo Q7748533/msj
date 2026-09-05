@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>回归测试：勾选状态持久化（修复验证）</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f0f2f5; padding: 24px; }
+h1 { font-size: 18px; margin-bottom: 6px; }
+.note { font-size: 12px; color: #999; margin-bottom: 16px; line-height: 1.6; }
+.summary { font-size: 15px; font-weight: 600; margin: 12px 0; }
+.case { padding: 10px 14px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; background: #fff; }
+.case.pass { border-left: 4px solid #52c41a; color: #389e0d; }
+.case.fail { border-left: 4px solid #ff4d4f; color: #cf1322; }
+.case .msg { display: block; font-size: 12px; color: #999; margin-top: 4px; }
+#stage { margin-top: 20px; }
+#stage h2 { font-size: 14px; margin-bottom: 8px; color: #555; }
+#tableArea table { border-collapse: collapse; background: #fff; font-size: 12px; }
+#tableArea th, #tableArea td { border: 1px solid #e8e8e8; padding: 4px 10px; text-align: left; white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>回归测试：勾选状态持久化（修复验证）</h1>
+<div class="note">
+  修复内容：勾选状态写入全局 Set（selectedOrderNos），renderTable 重渲染后自动恢复；
+  表头全选框随当前页勾选状态联动；订单被删后 Set 自动清理；跨页勾选计入批量操作。<br>
+  被测函数（renderTable / loadOrders / setupRealtime / toggleSelectAll / onRowCheckChange /
+  getSelectedOrderNos 等）原样复制自修复后的 index.html，运行于下方真实 DOM，通过真实点击触发。
+</div>
+<div class="summary" id="summary">运行中...</div>
+<div id="results"></div>
+<div id="stage">
+  <h2>被测表格（实时状态）</h2>
+  <div id="tableArea"></div>
+</div>
+<script>
+// ================= 测试基建 =================
+let passed = 0, failed = 0;
+function render(name, cls, msg) {
+  const icon = cls === 'pass' ? '✓' : '✗';
+  document.getElementById('results').innerHTML += `<div class="case ${cls}">${icon} ${name}<span class="msg">${msg || ''}</span></div>`;
+}
+function pass(name, msg) { passed++; render(name, 'pass', msg); }
+function fail(name, msg) { failed++; render(name, 'fail', msg); }
+function assert(cond, msg) { if (!cond) throw new Error(msg || '断言失败'); }
+function assertEqual(actual, expected, msg) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${msg || '不相等'}：期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}`);
+  }
+}
+
+// ================= Mock 环境（数据库替身） =================
+const MOCK_DB = [
+  { id: 1, 订单号: 'YD001', 车队: '一队', 派单情况: '未派', 是否结算: '否', 服务日期: '2026-09-05 08:00:00' },
+  { id: 2, 订单号: 'YD002', 车队: '',     派单情况: '未派', 是否结算: '否', 服务日期: '2026-09-05 09:00:00' },
+  { id: 3, 订单号: 'YD003', 车队: '二队', 派单情况: '已派', 是否结算: '是', 服务日期: '2026-09-05 10:00:00' }
+];
+const state = { realtimeCbs: [], db: [] };  // realtime 回调 + 可变数据库替身（用例可增删订单）
+
+function getSupabase() {
+  return {
+    channel: () => ({  // realtime 订阅替身：只记录 orders 表回调
+      on: (evt, filter, cb) => {
+        if (filter && filter.table === 'orders') state.realtimeCbs.push(cb);
+        return { subscribe: () => {} };
+      },
+      subscribe: () => {}
+    }),
+    from: () => ({  // 数据库查询替身：返回 state.db（用例可修改模拟订单增删）
+      select: () => ({
+        order: () => ({
+          range: () => Promise.resolve({ data: state.db.map(o => ({ ...o })), error: null })
+        })
+      })
+    })
+  };
+}
+// 与勾选无关的 UI 刷新函数 → 空操作
+function showToast() {} function hideToast() {} function updateSummary() {}
+function checkDriverReady() {} function syncHScroll() {} function loadFleets() {}
+
+// ================= 以下函数原样复制自修复后的 index.html =================
+// 全局状态（index.html L728-L737）
+let orders = [];
+let filterStatus = 'all';
+let fleetFilter = 'all';
+let searchTerm = '';
+let currentPage = 1;
+let isEditing = false;
+let selectedOrderNos = new Set(); // 勾选状态持久化：跨重渲染/翻页保留，订单被删后自动清理
+let PAGE_SIZE = 100; // 源码为 const，测试页改为 let 以便 R8 调小验证翻页
+const COLUMNS = ['订单号', '车队', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
+const SEARCH_FIELDS = ['订单号', '车队', '司机', '车号', '司机电话', '上车点', '下车点', '服务类型'];
+
+// index.html sortOrders
+function sortOrders(list) {
+  return [...list].sort((a, b) => {
+    const aSorted = a['派单情况'] === '已派' || a['派单情况'] === '订单取消';
+    const bSorted = b['派单情况'] === '已派' || b['派单情况'] === '订单取消';
+    if (aSorted && bSorted) {
+      const aDate = a['服务日期'] || '';
+      const bDate = b['服务日期'] || '';
+      if (aDate && bDate) return aDate.localeCompare(bDate);
+      if (aDate) return -1;
+      if (bDate) return 1;
+      return (a.id || 0) - (b.id || 0);
+    }
+    if (aSorted) return -1;
+    if (bSorted) return 1;
+    return (a.id || 0) - (b.id || 0);
+  });
+}
+
+// index.html loadOrders
+async function loadOrders() {
+  const supabase = getSupabase();
+  if (!supabase) { setTimeout(loadOrders, 300); return; }
+  let allOrders = [];
+  let start = 0;
+  const limit = 1000;
+  let hasError = false;
+  while (true) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*', { count: 'exact' })
+      .order('id', { ascending: true })
+      .range(start, start + limit - 1);
+    if (error) { console.error('加载失败:', error); hasError = true; break; }
+    if (!data || data.length === 0) break;
+    allOrders = allOrders.concat(data);
+    if (data.length < limit) break;
+    start += limit;
+  }
+  if (hasError) {
+    showToast('数据加载失败，请检查网络');
+    return;
+  }
+  orders = sortOrders(allOrders);
+  renderTable();
+}
+
+// index.html setupRealtime
+function setupRealtime() {
+  const supabase = getSupabase();
+  if (!supabase) { setTimeout(setupRealtime, 500); return; }
+  supabase
+    .channel('orders-channel')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'orders' },
+      () => {
+        if (isEditing) return; // 编辑中不刷新，避免丢失输入
+        loadOrders();
+      }
+    )
+    .subscribe();
+  supabase
+    .channel('fleets-channel')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'fleets' },
+      () => { loadFleets(); }
+    )
+    .subscribe();
+}
+
+// index.html getFilteredOrders
+function getFilteredOrders() {
+  let filtered = filterStatus === 'all' ? orders : orders.filter(o => o['派单情况'] === filterStatus);
+  if (fleetFilter !== 'all') {
+    filtered = filtered.filter(o => fleetFilter === '__none__' ? !o['车队'] : o['车队'] === fleetFilter);
+  }
+  if (searchTerm) {
+    const kw = searchTerm.toLowerCase();
+    filtered = filtered.filter(o => SEARCH_FIELDS.some(f => o[f] && o[f].toLowerCase().includes(kw)));
+  }
+  return filtered;
+}
+
+// index.html renderTable（修复后；省略与勾选无关的列渲染分支）
+function renderTable() {
+  const container = document.getElementById('tableArea');
+
+  // 清理已不存在的订单号（本端删除或他人删除），避免勾选状态残留
+  if (selectedOrderNos.size > 0) {
+    const validNos = new Set(orders.map(o => o['订单号']));
+    for (const no of [...selectedOrderNos]) {
+      if (!validNos.has(no)) selectedOrderNos.delete(no);
+    }
+  }
+
+  // 筛选后的订单
+  let filtered = getFilteredOrders();
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  if (currentPage > totalPages) currentPage = Math.max(1, totalPages);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageOrders = filtered.slice(start, start + PAGE_SIZE);
+
+  if (orders.length === 0) {
+    container.innerHTML = '<div class="empty-state">暂无订单</div>';
+    updateSummary();
+    return;
+  }
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state">当前筛选条件下无订单</div>';
+    updateSummary();
+    return;
+  }
+
+  // 表头全选框：当前页订单全部勾选时才显示选中（翻页/筛选后状态正确）
+  const allChecked = pageOrders.length > 0 && pageOrders.every(o => selectedOrderNos.has(o['订单号']));
+  let html = `<div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll" ${allChecked ? 'checked' : ''} onchange="toggleSelectAll(this)" title="全选"></th><th>#</th>`;
+  COLUMNS.forEach(c => { html += `<th>${c}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  pageOrders.forEach((o, displayIdx) => {
+    const orderNo = o['订单号'];
+    html += `<tr data-no="${esc(orderNo)}">`;
+    const rowChecked = selectedOrderNos.has(orderNo) ? ' checked' : '';
+    html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}"${rowChecked} onchange="onRowCheckChange(this)" onclick="event.stopPropagation()"></td>`;
+    html += `<td>${start + displayIdx + 1}</td>`;
+    COLUMNS.forEach(col => {
+      const val = o[col] || '';
+      html += `<td title="${esc(val)}">${esc(val)}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+  updateSummary();
+  checkDriverReady();
+  syncHScroll();
+}
+
+// index.html toggleSelectAll / onRowCheckChange / getSelectedOrderNos（修复后）
+function toggleSelectAll(el) {
+  // 全选/取消全选：只作用于当前页，状态写入 Set 持久化（重渲染后自动恢复）
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = el.checked;
+    const no = cb.getAttribute('data-no');
+    if (el.checked) selectedOrderNos.add(no); else selectedOrderNos.delete(no);
+  });
+}
+
+// 单行勾选变化：同步 Set + 联动表头全选框
+function onRowCheckChange(el) {
+  const no = el.getAttribute('data-no');
+  if (el.checked) selectedOrderNos.add(no); else selectedOrderNos.delete(no);
+  const cbs = document.querySelectorAll('.row-check');
+  const selectAll = document.getElementById('selectAll');
+  if (selectAll) selectAll.checked = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
+}
+
+function getSelectedOrderNos() {
+  return Array.from(selectedOrderNos); // 以 Set 为准：跨页勾选也计入批量操作
+}
+
+// index.html esc / escJs
+function esc(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML.replace(/"/g, '&quot;');
+}
+function escJs(str) {
+  return esc(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+// ================= 测试辅助 =================
+async function resetAndLoad() {
+  state.realtimeCbs = [];
+  state.db = MOCK_DB.map(o => ({ ...o }));  // 每个用例全新数据库
+  orders = [];
+  currentPage = 1;
+  PAGE_SIZE = 100;
+  isEditing = false;
+  selectedOrderNos.clear();
+  filterStatus = 'all'; fleetFilter = 'all'; searchTerm = '';
+  await loadOrders();
+}
+function clickSelectAll() {  // 真实点击表头"全选"（浏览器原生触发 onchange）
+  document.getElementById('selectAll').click();
+}
+const checkedInDom = () => [...document.querySelectorAll('.row-check:checked')].map(cb => cb.getAttribute('data-no'));
+
+// ================= 测试用例 =================
+const TESTS = [
+  ['R1 基线：渲染 3 条订单 → 点击表头全选 → 返回全部订单号', async () => {
+    await resetAndLoad();
+    assertEqual(document.querySelectorAll('.row-check').length, 3, '应渲染出 3 个行 checkbox');
+    clickSelectAll();
+    assertEqual(getSelectedOrderNos().sort(), ['YD001', 'YD002', 'YD003'], '全选后应返回全部订单号');
+    return '勾选动作正常';
+  }],
+
+  ['R2 修复验证：全选后 renderTable 重渲染 → 勾选全部保留 + 表头仍选中', async () => {
+    await resetAndLoad();
+    clickSelectAll();
+    assertEqual(getSelectedOrderNos().length, 3, '前置：全选后应有 3 条勾选');
+    renderTable();  // 模拟 realtime / 筛选 / 搜索触发的重渲染
+    assertEqual(getSelectedOrderNos().sort(), ['YD001', 'YD002', 'YD003'], '重渲染后勾选应全部保留');
+    assertEqual(checkedInDom().sort(), ['YD001', 'YD002', 'YD003'], '重渲染后 DOM checkbox 应恢复选中');
+    assert(document.getElementById('selectAll').checked === true, '表头全选框应保持选中');
+    return '3/3 勾选保留，DOM 与表头状态均正确恢复';
+  }],
+
+  ['R3 修复验证：手动勾选 2 行 → 重渲染 → 勾选保留 + 表头不选中', async () => {
+    await resetAndLoad();
+    const cbs = document.querySelectorAll('.row-check');
+    cbs[0].click();  // 真实点击第 1、3 行（排序后行序 YD003/YD001/YD002）
+    cbs[2].click();
+    assertEqual(getSelectedOrderNos().sort(), ['YD002', 'YD003'], '前置：手动勾选应有 2 条');
+    renderTable();
+    assertEqual(getSelectedOrderNos().sort(), ['YD002', 'YD003'], '重渲染后手动勾选应保留');
+    assertEqual(checkedInDom().sort(), ['YD002', 'YD003'], '重渲染后 DOM 应恢复这 2 行选中');
+    assert(document.getElementById('selectAll').checked === false, '部分勾选时表头全选框应不选中');
+    return '2/2 手动勾选保留，表头状态正确（部分选中）';
+  }],
+
+  ['R4 修复验证：完整链路 realtime 变更 → loadOrders → 勾选保留', async () => {
+    await resetAndLoad();
+    setupRealtime();  // 建立 realtime 订阅（同正式页面）
+    assertEqual(state.realtimeCbs.length, 1, '应注册 1 个 orders 表回调');
+    clickSelectAll();
+    assertEqual(getSelectedOrderNos().length, 3, '前置：全选后应有 3 条勾选');
+    await state.realtimeCbs[0]();  // 模拟其他用户修改任意一条订单 → realtime 事件
+    assertEqual(getSelectedOrderNos().sort(), ['YD001', 'YD002', 'YD003'], 'realtime 刷新后勾选应全部保留');
+    assertEqual(checkedInDom().length, 3, 'realtime 刷新后 DOM 应有 3 个选中');
+    return '原 bug 场景（自动取消勾选）已修复：3/3 保留';
+  }],
+
+  ['R5 边界：isEditing=true（编辑单元格中）realtime 被跳过，勾选保留', async () => {
+    await resetAndLoad();
+    setupRealtime();
+    clickSelectAll();
+    const oldCbs = [...document.querySelectorAll('.row-check')];
+    isEditing = true;  // 模拟正在编辑单元格
+    await state.realtimeCbs[0]();
+    assertEqual(getSelectedOrderNos().length, 3, '编辑中勾选应保留');
+    assert(oldCbs.every(cb => cb.isConnected), '编辑中表格不应被重建（旧 checkbox 仍在 DOM）');
+    isEditing = false;
+    return '编辑保护不受修复影响';
+  }],
+
+  ['R6 新增联动：全选后取消一行 → 表头全选框自动取消', async () => {
+    await resetAndLoad();
+    clickSelectAll();
+    assert(document.getElementById('selectAll').checked === true, '前置：表头应选中');
+    document.querySelectorAll('.row-check')[1].click();  // 真实点击取消第 2 行
+    assert(document.getElementById('selectAll').checked === false, '取消一行后表头全选框应取消选中');
+    assertEqual(getSelectedOrderNos().length, 2, 'Set 应剩 2 条');
+    return '表头全选框随行勾选状态联动（原缺失的反向同步）';
+  }],
+
+  ['R7 新增清理：勾选的订单被删除（他人/本端）→ Set 自动清理', async () => {
+    await resetAndLoad();
+    clickSelectAll();
+    assertEqual(getSelectedOrderNos().length, 3, '前置：全选 3 条');
+    state.db = state.db.filter(o => o['订单号'] !== 'YD002');  // 模拟 YD002 被删除
+    await loadOrders();  // realtime → loadOrders 链路
+    assertEqual(getSelectedOrderNos().sort(), ['YD001', 'YD003'], '被删订单应从勾选中清理');
+    assertEqual(checkedInDom().sort(), ['YD001', 'YD003'], 'DOM 只剩 2 行且选中');
+    return '删除订单后勾选状态自动清理，不残留脏数据';
+  }],
+
+  ['R8 新增跨页：翻页后勾选保留，表头状态随当前页正确显示', async () => {
+    await resetAndLoad();
+    PAGE_SIZE = 2;        // 3 条订单分 2 页（第 1 页 YD003/YD001，第 2 页 YD002）
+    currentPage = 1;
+    renderTable();
+    assertEqual(document.querySelectorAll('.row-check').length, 2, '第 1 页应显示 2 行');
+    clickSelectAll();     // 第 1 页全选
+    assertEqual(getSelectedOrderNos().sort(), ['YD001', 'YD003'], '第 1 页全选应入选 2 条');
+    currentPage = 2;
+    renderTable();        // 翻到第 2 页
+    assertEqual(document.querySelectorAll('.row-check').length, 1, '第 2 页应显示 1 行');
+    assertEqual(checkedInDom(), [], '第 2 页行未勾选，DOM 正确');
+    assert(document.getElementById('selectAll').checked === false, '第 2 页未全选，表头应不选中');
+    document.querySelector('.row-check').click();  // 勾选第 2 页唯一一行
+    assertEqual(getSelectedOrderNos().sort(), ['YD001', 'YD002', 'YD003'], '跨页勾选应累计 3 条');
+    assert(document.getElementById('selectAll').checked === true, '第 2 页全选后表头应选中');
+    return '跨页勾选持久化，批量操作可覆盖多页';
+  }]
+];
+
+// ================= 运行 =================
+(async () => {
+  for (const [name, body] of TESTS) {
+    try {
+      const detail = await body();
+      pass(name, detail);
+    } catch (e) {
+      fail(name, e.message);
+    }
+  }
+  document.getElementById('summary').innerHTML =
+    `共 ${TESTS.length} 项：${passed} 项通过 ✓，${failed} 项失败 ✗` +
+    (failed === 0
+      ? `<br><strong style="color:#389e0d;">结论：修复验证通过 — 勾选状态跨重渲染/翻页保留，联动与清理逻辑正常</strong>`
+      : `<br><strong style="color:#cf1322;">结论：存在失败用例，修复未通过验证</strong>`);
+})();
+</script>
+</body>
+</html>

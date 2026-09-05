@@ -731,6 +731,7 @@ let fleetFilter = 'all'; // 车队筛选（'all'/车队名/'__none__'未分配�
 let searchTerm = '';
 let currentPage = 1;
 let isEditing = false; // 防止实时同步打断编辑
+let selectedOrderNos = new Set(); // 勾选状态持久化：跨重渲染/翻页保留，订单被删后自动清理
 let tabJumpTarget = null; // Tab 跳转目标 { orderNo, field }
 const EDITABLE_FIELDS = ['车号', '司机', '司机电话'];
 const PAGE_SIZE = 100;
@@ -933,6 +934,10 @@ function parseTabular(text) {
 // ============ 导入 ============
 function importOrders() {
   if (isFleet()) return; // 车队视图无导入权限
+  if (!document.getElementById('importFleet').value) {
+    alert('必须选择车队才能导入订单');
+    return;
+  }
   verifyPassword(function(ok) {
     if (!ok) return;
     doImportOrders();
@@ -982,6 +987,11 @@ function clearInput() {
 // ============ Excel导入 ============
 function importExcel(fileInput) {
   if (isFleet()) { fileInput.value = ''; return; } // 车队视图无导入权限
+  if (!document.getElementById('importFleet').value) {
+    alert('必须选择车队才能导入订单');
+    fileInput.value = '';
+    return;
+  }
   verifyPassword(function(ok) {
     if (!ok) { fileInput.value = ''; return; }
     doImportExcel(fileInput);
@@ -1104,7 +1114,7 @@ function refreshFleetUI() {
   // 导入下拉框（保留当前选择，失效则回退不分配）
   const importSel = document.getElementById('importFleet');
   const curImp = importSel.value;
-  importSel.innerHTML = '<option value="">不分配（导入后右键手动分配）</option>';
+  importSel.innerHTML = '<option value="">请选择车队</option>';
   fleets.forEach(f => {
     const opt = document.createElement('option');
     opt.value = f; opt.textContent = f;
@@ -1324,6 +1334,14 @@ function doSearch() {
 function renderTable() {
   const container = document.getElementById('tableArea');
 
+  // 清理已不存在的订单号（本端删除或他人删除），避免勾选状态残留
+  if (selectedOrderNos.size > 0) {
+    const validNos = new Set(orders.map(o => o['订单号']));
+    for (const no of [...selectedOrderNos]) {
+      if (!validNos.has(no)) selectedOrderNos.delete(no);
+    }
+  }
+
   // 筛选后的订单
   let filtered = getFilteredOrders();
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
@@ -1343,14 +1361,17 @@ function renderTable() {
     return;
   }
 
-  let html = '<div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)" title="全选"></th><th>#</th>';
+  // 表头全选框：当前页订单全部勾选时才显示选中（翻页/筛选后状态正确）
+  const allChecked = pageOrders.length > 0 && pageOrders.every(o => selectedOrderNos.has(o['订单号']));
+  let html = `<div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAll" ${allChecked ? 'checked' : ''} onchange="toggleSelectAll(this)" title="全选"></th><th>#</th>`;
   COLUMNS.forEach(c => { html += `<th>${c}</th>`; });
   html += '</tr></thead><tbody>';
 
   pageOrders.forEach((o, displayIdx) => {
     const orderNo = o['订单号'];
     html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${escJs(orderNo)}')">`;
-    html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}" onclick="event.stopPropagation()"></td>`;
+    const rowChecked = selectedOrderNos.has(orderNo) ? ' checked' : '';
+    html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}"${rowChecked} onchange="onRowCheckChange(this)" onclick="event.stopPropagation()"></td>`;
     html += `<td>${start + displayIdx + 1}</td>`;
     COLUMNS.forEach(col => {
       const val = o[col] || '';
@@ -1688,12 +1709,25 @@ function deleteOrder(orderNo) {
 }
 
 function toggleSelectAll(el) {
-  document.querySelectorAll('.row-check').forEach(cb => { cb.checked = el.checked; });
+  // 全选/取消全选：只作用于当前页，状态写入 Set 持久化（重渲染后自动恢复）
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = el.checked;
+    const no = cb.getAttribute('data-no');
+    if (el.checked) selectedOrderNos.add(no); else selectedOrderNos.delete(no);
+  });
+}
+
+// 单行勾选变化：同步 Set + 联动表头全选框
+function onRowCheckChange(el) {
+  const no = el.getAttribute('data-no');
+  if (el.checked) selectedOrderNos.add(no); else selectedOrderNos.delete(no);
+  const cbs = document.querySelectorAll('.row-check');
+  const selectAll = document.getElementById('selectAll');
+  if (selectAll) selectAll.checked = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
 }
 
 function getSelectedOrderNos() {
-  const cbs = document.querySelectorAll('.row-check:checked');
-  return Array.from(cbs).map(cb => cb.getAttribute('data-no'));
+  return Array.from(selectedOrderNos); // 以 Set 为准：跨页勾选也计入批量操作
 }
 
 function batchDelete() {
