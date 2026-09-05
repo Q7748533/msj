@@ -607,6 +607,9 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
           <option value="all">全部车队</option>
           <option value="__none__">未分配</option>
         </select>
+        <select class="fleet-select" id="vehicleFilter" onchange="setVehicleFilter(this.value)">
+          <option value="all">全部车型</option>
+        </select>
       </div>
       <input type="text" class="search-input" id="searchInput" placeholder="搜索订单号/司机/车号..." oninput="doSearch()">
       <div class="actions">
@@ -827,6 +830,7 @@ function getSupabase() {
 let orders = [];
 let filterStatus = 'all';
 let fleetFilter = 'all'; // 车队筛选（'all'/车队名/'__none__'未分配）
+let vehicleFilter = 'all'; // 车型筛选（'all'/预订车型值，选项从订单数据动态生成）
 let searchTerm = '';
 let currentPage = 1;
 let selectedOrderNos = new Set(); // 勾选的订单号（跨筛选/搜索/分页保留，重渲染后恢复）
@@ -883,6 +887,7 @@ async function loadOrders() {
     return;
   }
   orders = sortOrders(allOrders);
+  refreshVehicleFilter(); // 车型选项随数据更新（新增车型值自动出现，被删车型自动清理）
   renderTable();
 }
 
@@ -1154,6 +1159,10 @@ function getFilteredOrders() {
   if (fleetFilter !== 'all') {
     filtered = filtered.filter(o => fleetFilter === '__none__' ? !o['车队'] : o['车队'] === fleetFilter);
   }
+  // 车型筛选（按预订车型精确匹配）
+  if (vehicleFilter !== 'all') {
+    filtered = filtered.filter(o => o['预订车型'] === vehicleFilter);
+  }
   if (searchTerm) {
     const kw = searchTerm.toLowerCase();
     filtered = filtered.filter(o => SEARCH_FIELDS.some(f => o[f] && o[f].toLowerCase().includes(kw)));
@@ -1175,6 +1184,36 @@ function setFleetFilter(val) {
   fleetFilter = val;
   currentPage = 1;
   renderTable();
+}
+
+// 车型筛选切换（调度/车队视图均可用，纯查看筛选）
+function setVehicleFilter(val) {
+  vehicleFilter = val;
+  currentPage = 1;
+  renderTable();
+}
+
+// 车型等级排序基准（从低到高），未知车型值排在已知等级之后
+const VEHICLE_LEVELS = ['经济型', '舒适型', '商务型', '豪华型'];
+
+// 车型下拉选项从订单数据动态生成（去重+按等级排序，保留当前选择，失效回退全部）
+function refreshVehicleFilter() {
+  const sel = document.getElementById('vehicleFilter');
+  if (!sel) return;
+  const cur = sel.value;
+  const known = [], unknown = [];
+  [...new Set(orders.map(o => o['预订车型']).filter(Boolean))].forEach(t => {
+    (VEHICLE_LEVELS.includes(t) ? known : unknown).push(t);
+  });
+  known.sort((a, b) => VEHICLE_LEVELS.indexOf(a) - VEHICLE_LEVELS.indexOf(b));
+  unknown.sort(); // 未知值按码点排序兜底
+  const types = known.concat(unknown);
+  let html = '<option value="all">全部车型</option>';
+  types.forEach(t => { html += `<option value="${esc(t)}">${esc(t)}</option>`; });
+  sel.innerHTML = html;
+  // 当前选择仍存在则保留，否则回退全部（订单被删/清空场景）
+  sel.value = types.includes(cur) ? cur : 'all';
+  if (sel.value !== cur) vehicleFilter = 'all';
 }
 
 // ============ 车队管理 ============
@@ -1885,9 +1924,11 @@ function clearOrders() {
     searchTerm = '';
     filterStatus = 'all';
     fleetFilter = 'all';
+    vehicleFilter = 'all';
     currentPage = 1;
     document.getElementById('searchInput').value = '';
     document.getElementById('fleetFilter').value = 'all';
+    document.getElementById('vehicleFilter').value = 'all';
     document.querySelectorAll('.filter-btn').forEach(b => {
       b.classList.toggle('active', b.textContent.trim() === '全部');
     });
