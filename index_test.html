@@ -295,9 +295,15 @@ th::after {
   left: 0; right: 0; bottom: -1px;
   border-bottom: 1px solid #e8e8e8;
 }
+/* 斑马纹：偶数行极淡灰底，辅助 100 行宽表横向追踪（同优先级下写在 hover 前，hover 仍生效） */
+tr:nth-child(even) td { background: #fafbfc; }
 tr:hover td { background: #f5f8ff; }
+/* 勾选行：淡蓝高亮（写在 hover 后，选中状态优先于 hover 斑马纹） */
+tr.selected td { background: #e6f4ff; }
 tr.editing td { background: #e6f7ff !important; }
 tr.editing td.editable { background: #bae7ff !important; }
+/* 订单取消行：整行文字淡化，与需要处理的未派单一眼区分 */
+tr.cancelled td { color: #adb5bd; }
 td { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 
@@ -313,7 +319,7 @@ td.col-addr { max-width: 300px; white-space: normal; word-break: break-all; }
 }
 .tag-pending  { background: #fff1f0; color: #cf1322; }
 .tag-done     { background: #f6ffed; color: #389e0d; }
-.tag-cancel   { background: #fff1f0; color: #cf1322; }
+.tag-cancel   { background: #f5f5f5; color: #999; }
 .tag-no       { background: #fff1f0; color: #cf1322; }
 .tag-yes      { background: #f6ffed; color: #389e0d; }
 
@@ -1507,7 +1513,11 @@ function renderTable() {
 
   pageOrders.forEach((o, displayIdx) => {
     const orderNo = o['订单号'];
-    html += `<tr data-no="${esc(orderNo)}" oncontextmenu="showCtxMenu(event, '${escJs(orderNo)}')">`;
+    // 行 class：勾选高亮 + 取消淡化
+    const rowCls = [];
+    if (selectedOrderNos.has(orderNo)) rowCls.push('selected');
+    if (o['派单情况'] === '订单取消') rowCls.push('cancelled');
+    html += `<tr data-no="${esc(orderNo)}" class="${rowCls.join(' ')}" oncontextmenu="showCtxMenu(event, '${escJs(orderNo)}')">`;
     const rowChecked = selectedOrderNos.has(orderNo) ? ' checked' : '';
     html += `<td><input type="checkbox" class="row-check" data-no="${esc(orderNo)}"${rowChecked} onchange="onRowCheckChange(this)" onclick="event.stopPropagation()"></td>`;
     html += `<td>${start + displayIdx + 1}</td>`;
@@ -1852,6 +1862,8 @@ function toggleSelectAll(el) {
     cb.checked = el.checked;
     const no = cb.getAttribute('data-no');
     if (el.checked) selectedOrderNos.add(no); else selectedOrderNos.delete(no);
+    const tr = cb.closest('tr');
+    if (tr) tr.classList.toggle('selected', el.checked); // 勾选行立即高亮
   });
 }
 
@@ -1859,6 +1871,8 @@ function toggleSelectAll(el) {
 function onRowCheckChange(el) {
   const no = el.getAttribute('data-no');
   if (el.checked) selectedOrderNos.add(no); else selectedOrderNos.delete(no);
+  const tr = el.closest('tr');
+  if (tr) tr.classList.toggle('selected', el.checked); // 勾选行立即高亮
   const cbs = document.querySelectorAll('.row-check');
   const selectAll = document.getElementById('selectAll');
   if (selectAll) selectAll.checked = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
