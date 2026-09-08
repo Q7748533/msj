@@ -848,8 +848,10 @@ const FIELD_MAP = {
   '服务城市': '服务城市',
 };
 
-// 显示列（按顺序）
-const COLUMNS = ['订单号', '车队', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
+// 显示列（按顺序）——「是否结算」列已按需求从表格隐藏
+const COLUMNS = ['订单号', '车队', '派单情况', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
+// 导出/复制用完整字段清单（含已隐藏的是否结算，数据不因隐藏列而丢失）
+const EXPORT_COLUMNS = ['订单号', '车队', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
 
 // ============ 解析逻辑 ============
 function mapOrder(raw) {
@@ -1245,7 +1247,7 @@ let fleetPws = {};     // 车队名→登录密码（loadFleets 从 fleets 表�
 
 function isFleet() { return userRole === 'fleet'; }
 
-// 权限判断：车队视图只能编辑 车号/司机/司机电话（派单情况/是否结算仅调度可改）
+// 权限判断：车队视图只能编辑 车号/司机/司机电话（派单情况仅调度可改；是否结算列已隐藏）
 function canEditField(field) {
   if (!isFleet()) return true;
   return EDITABLE_FIELDS.includes(field);
@@ -1430,9 +1432,6 @@ function renderTable() {
       } else if (col === '派单情况') {
         const cls = val === '已派' ? 'tag-done' : val === '订单取消' ? 'tag-cancel' : 'tag-pending';
         html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
-      } else if (col === '是否结算') {
-        const cls = val === '是' ? 'tag-yes' : 'tag-no';
-        html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '是否结算')">${esc(val)}</span></td>`;
       } else if (['车号', '司机', '司机电话', '下车点'].includes(col)) {
         const addrCls = col === '下车点' ? ' col-addr' : '';
         html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${escJs(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
@@ -1551,7 +1550,7 @@ function jumpToTabTarget() {
 }
 
 function openModal(orderNo, field) {
-  if (!canEditField(field)) return; // 车队视图：派单情况/是否结算仅调度可改
+  if (!canEditField(field)) return; // 车队视图：派单情况仅调度可改（是否结算列已隐藏）
   modalTarget = { orderNo, field };
   const overlay = document.getElementById('modalOverlay');
   const title = document.getElementById('modalTitle');
@@ -1562,13 +1561,6 @@ function openModal(orderNo, field) {
   if (field === '派单情况') {
     title.textContent = '修改派单状态';
     const options = ['未派', '已派', '订单取消'];
-    const current = order[field];
-    optsDiv.innerHTML = options.map(o =>
-      `<div class="opt${o === current ? ' active' : ''}" onclick="selectOpt(this, '${o}')">${o}</div>`
-    ).join('');
-  } else if (field === '是否结算') {
-    title.textContent = '修改结算状态';
-    const options = ['是', '否'];
     const current = order[field];
     optsDiv.innerHTML = options.map(o =>
       `<div class="opt${o === current ? ' active' : ''}" onclick="selectOpt(this, '${o}')">${o}</div>`
@@ -1890,7 +1882,7 @@ function ctxCopy() {
   if (!orderNo) return;
   const order = findOrderByNo(orderNo);
   if (!order) return;
-  const text = COLUMNS.map(c => `${c}：${order[c] || ''}`).join('\n');
+  const text = EXPORT_COLUMNS.map(c => `${c}：${order[c] || ''}`).join('\n');
   copyToClipboard(text, function() {
     showSuccess('订单已复制到剪贴板');
   }, function() {
@@ -1974,9 +1966,9 @@ function exportCSV() {
   const exportData = getFilteredOrders();
   if (exportData.length === 0) { alert('没有可导出的订单'); return; }
 
-  let csv = '\uFEFF' + COLUMNS.join(',') + '\n';
+  let csv = '\uFEFF' + EXPORT_COLUMNS.join(',') + '\n';
   exportData.forEach(o => {
-    csv += COLUMNS.map(c => '"' + (o[c] || '').replace(/"/g, '""') + '"').join(',') + '\n';
+    csv += EXPORT_COLUMNS.map(c => '"' + (o[c] || '').replace(/"/g, '""') + '"').join(',') + '\n';
   });
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
