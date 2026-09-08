@@ -592,7 +592,7 @@ th input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; vertical
     <div class="sidebar-body">
       <textarea id="inputArea" placeholder="从订单系统复制数据粘贴到此处&#10;多条订单请用空行分隔&#10;&#10;支持键值对格式和表格格式"></textarea>
       <select class="fleet-select" id="importFleet" style="width:100%;">
-        <option value="">不分配（导入后右键手动分配）</option>
+        <option value="">未分配（导入后可右键分配）</option>
       </select>
       <div class="btn-row">
         <button class="btn btn-primary" onclick="importOrders()">导入订单</button>
@@ -947,14 +947,7 @@ function parseTabular(text) {
 // ============ 导入 ============
 function importOrders() {
   if (isFleet()) return; // 车队视图无导入权限
-  if (!document.getElementById('importFleet').value) {
-    alert('必须选择车队才能导入订单');
-    return;
-  }
-  verifyPassword(function(ok) {
-    if (!ok) return;
-    doImportOrders();
-  });
+  doImportOrders(); // 导入免密码；车队未选时默认未分配（doImportOrders 内 ''=不分配）
 }
 
 function doImportOrders() {
@@ -1000,15 +993,7 @@ function clearInput() {
 // ============ Excel导入 ============
 function importExcel(fileInput) {
   if (isFleet()) { fileInput.value = ''; return; } // 车队视图无导入权限
-  if (!document.getElementById('importFleet').value) {
-    alert('必须选择车队才能导入订单');
-    fileInput.value = '';
-    return;
-  }
-  verifyPassword(function(ok) {
-    if (!ok) { fileInput.value = ''; return; }
-    doImportExcel(fileInput);
-  });
+  doImportExcel(fileInput); // 导入免密码；车队未选时默认未分配
 }
 
 function doImportExcel(fileInput) {
@@ -1161,7 +1146,7 @@ function refreshFleetUI() {
   // 导入下拉框（保留当前选择，失效则回退不分配）
   const importSel = document.getElementById('importFleet');
   const curImp = importSel.value;
-  importSel.innerHTML = '<option value="">请选择车队</option>';
+  importSel.innerHTML = '<option value="">未分配（导入后可右键分配）</option>';
   fleets.forEach(f => {
     const opt = document.createElement('option');
     opt.value = f; opt.textContent = f;
