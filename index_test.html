@@ -842,7 +842,7 @@ let currentPage = 1;
 let selectedOrderNos = new Set(); // 勾选的订单号（跨筛选/搜索/分页保留，重渲染后恢复）
 let isEditing = false; // 防止实时同步打断编辑
 let tabJumpTarget = null; // Tab 跳转目标 { orderNo, field }
-const EDITABLE_FIELDS = ['车号', '司机', '司机电话'];
+const EDITABLE_FIELDS = ['车号', '司机']; // 司机电话已按需求全端移除（2026-09-09），车队可编辑项剩 车号/司机
 const PAGE_SIZE = 100;
 
 // 订单排序：已派+取消按服务时间升序在前，未派按导入顺序(id)在后
@@ -948,9 +948,9 @@ const FIELD_MAP = {
 };
 
 // 显示列（按顺序）——「是否结算」列已按需求从表格隐藏
-const COLUMNS = ['订单号', '车队', '派单情况', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
-// 导出/复制用完整字段清单（含已隐藏的是否结算，数据不因隐藏列而丢失）
-const EXPORT_COLUMNS = ['订单号', '车队', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '司机电话', '服务标准', '举牌服务'];
+const COLUMNS = ['订单号', '车队', '派单情况', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '服务标准', '举牌服务']; // 司机电话列已全端移除（2026-09-09）
+// 导出/复制用完整字段清单（含已隐藏的是否结算；司机电话已按需求全端移除，不导出）
+const EXPORT_COLUMNS = ['订单号', '车队', '派单情况', '是否结算', '预订车型', '服务类型', '服务城市', '服务日期', '航班号', '上车点', '下车点', '车号', '司机', '服务标准', '举牌服务'];
 
 // ============ 解析逻辑 ============
 function mapOrder(raw) {
@@ -1143,7 +1143,7 @@ function doImportExcel(fileInput) {
 }
 
 // ============ 筛选 ============
-const SEARCH_FIELDS = ['订单号', '车队', '司机', '车号', '司机电话', '上车点', '下车点', '服务类型'];
+const SEARCH_FIELDS = ['订单号', '车队', '司机', '车号', '上车点', '下车点', '服务类型']; // 司机电话已从搜索移除（2026-09-09）
 
 // 统一筛选+搜索逻辑（renderTable / goPage / getNextEditableCell / exportCSV 共用）
 function getFilteredOrders() {
@@ -1331,7 +1331,7 @@ let fleetPws = {};     // 车队名→登录密码（loadFleets 从 fleets 表�
 
 function isFleet() { return userRole === 'fleet'; }
 
-// 权限判断：车队视图只能编辑 车号/司机/司机电话（派单情况仅调度可改；是否结算列已隐藏）
+// 权限判断：车队视图只能编辑 车号/司机（派单情况仅调度可改；是否结算列已隐藏；司机电话已全端移除）
 function canEditField(field) {
   if (!isFleet()) return true;
   return EDITABLE_FIELDS.includes(field);
@@ -1516,7 +1516,7 @@ function renderTable() {
       } else if (col === '派单情况') {
         const cls = val === '已派' ? 'tag-done' : val === '订单取消' ? 'tag-cancel' : 'tag-pending';
         html += `<td><span class="tag ${cls}" onclick="event.stopPropagation();openModal('${escJs(orderNo)}', '派单情况')">${esc(val)}</span></td>`;
-      } else if (['车号', '司机', '司机电话', '下车点'].includes(col)) {
+      } else if (['车号', '司机', '下车点'].includes(col)) {
         const addrCls = col === '下车点' ? ' col-addr' : '';
         html += `<td class="editable${addrCls}" onclick="event.stopPropagation();editCell('${escJs(orderNo)}', '${col}', this)">${esc(val) || '<span style="color:#ccc">点击填写</span>'}</td>`;
       } else if (col === '上车点' || col === '服务标准' || col === '举牌服务') {
@@ -1680,7 +1680,7 @@ function closeModal() {
 }
 
 function editCell(orderNo, field, td) {
-  if (!canEditField(field)) return; // 车队视图：仅可编辑 车号/司机/司机电话
+  if (!canEditField(field)) return; // 车队视图：仅可编辑 车号/司机（司机电话已移除）
   const order = findOrderByNo(orderNo);
   if (!order) return;
   const current = order[field] || '';
@@ -1751,7 +1751,7 @@ function checkDriverReady() {
   // 统计未派且司机信息齐全的订单数量（车队视图只统计本车队）
   const base = isFleet() ? orders.filter(o => o['车队'] === userFleet) : orders;
   const readyCount = base.filter(o =>
-    o['派单情况'] === '未派' && o['车号'] && o['司机'] && o['司机电话']
+    o['派单情况'] === '未派' && o['车号'] && o['司机']
   ).length;
   if (readyCount > 0) {
     showToast(`${readyCount} 条未派订单已安排司机接单，请及时派单！`);
